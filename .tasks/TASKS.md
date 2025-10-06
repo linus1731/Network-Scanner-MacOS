@@ -28,14 +28,14 @@
 ## 🎯 Phase 1: Quick Wins (Status: 0/14 Tasks)
 
 ### Task 1: Zusätzliche Ausgabeformate
-**Status**: ⬜ Nicht gestartet | **Priorität**: P0 | **Geschätzt**: 3-5 Tage
+**Status**: 🚧 In Arbeit | **Priorität**: P0 | **Geschätzt**: 3-5 Tage
 
-- [ ] **1.1 CSV-Export**
-  - [ ] 1.1.1 `netscan/export.py` mit CSVExporter-Klasse
-  - [ ] 1.1.2 CLI-Option `--output-csv <datei>`
-  - [ ] 1.1.3 Spalten: IP, Status, Latenz, Hostname, MAC, Vendor, Ports
-  - [ ] 1.1.4 Escaping für Kommas und Anführungszeichen
-  - [ ] 1.1.5 Unit-Tests schreiben
+- [x] **1.1 CSV-Export**
+  - [x] 1.1.1 `netscan/export.py` mit CSVExporter-Klasse
+  - [x] 1.1.2 CLI-Option `--output-csv <datei>`
+  - [x] 1.1.3 Spalten: IP, Status, Latenz, Hostname, MAC, Vendor, Ports
+  - [x] 1.1.4 Escaping für Kommas und Anführungszeichen
+  - [x] 1.1.5 Unit-Tests schreiben
 
 - [ ] **1.2 Markdown-Export**
   - [ ] 1.2.1 MarkdownExporter-Klasse
