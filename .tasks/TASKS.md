@@ -52,12 +52,12 @@
   - [ ] 1.3.5 Farbcodierung wie TUI
   - [ ] 1.3.6 Unit-Tests schreiben
 
-- [ ] **1.4 TUI-Export**
-  - [ ] 1.4.1 Hotkey `e` für Export-Menü
-  - [ ] 1.4.2 Popup mit Format-Auswahl
-  - [ ] 1.4.3 Dateiname-Eingabe mit Default
-  - [ ] 1.4.4 Fortschrittsanzeige
-  - [ ] 1.4.5 Erfolgsmeldung
+- [x] **1.4 TUI-Export**
+  - [x] 1.4.1 Hotkey `e` für Export-Menü
+  - [x] 1.4.2 Popup mit Format-Auswahl
+  - [x] 1.4.3 Dateiname-Eingabe mit Default
+  - [x] 1.4.4 Fortschrittsanzeige
+  - [x] 1.4.5 Erfolgsmeldung
 
 **Dateien zu erstellen/ändern**:
 - `netscan/export.py` (NEU)
