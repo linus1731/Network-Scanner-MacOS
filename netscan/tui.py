@@ -5,8 +5,9 @@ import time
 import threading
 import textwrap
 import socket
-from typing import List, Optional
-from datetime import datetime
+import json
+from typing import List, Optional, Dict, Tuple
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .netinfo import get_default_interface, get_local_network_cidr
@@ -43,8 +44,11 @@ class TuiApp:
         self.portscan_target: Optional[str] = None
         self.portscan_open: List[int] = []
         self.portscan_running = False
-        self.portscan_cache: dict[str, List[int]] = {}  # Cache: ip -> open ports
+        # Persistent cache with TTL: ip -> (ports, timestamp)
+        self.portscan_cache: Dict[str, Tuple[List[int], float]] = {}
         self.portscan_current_port: Optional[int] = None  # Current port being scanned
+        self.cache_ttl = 3600  # Cache TTL in seconds (1 hour default)
+        self.cache_file = Path.home() / ".netscan_cache.json"
         # details overlay
         self.detail_active = False
         self.detail_ip: Optional[str] = None
@@ -58,6 +62,59 @@ class TuiApp:
         self.export_message_color: int = 1  # 1=green, 2=red
         # scan progress
         self.scan_current_host: Optional[str] = None  # Currently scanning host
+        
+        # Load persistent cache
+        self._load_cache()
+
+    def _load_cache(self) -> None:
+        """Load port scan cache from disk."""
+        try:
+            if self.cache_file.exists():
+                with open(self.cache_file, 'r') as f:
+                    data = json.load(f)
+                    # Filter expired entries
+                    now = time.time()
+                    self.portscan_cache = {
+                        ip: (ports, ts)
+                        for ip, (ports, ts) in data.items()
+                        if now - ts < self.cache_ttl
+                    }
+        except Exception:
+            self.portscan_cache = {}
+    
+    def _save_cache(self) -> None:
+        """Save port scan cache to disk."""
+        try:
+            # Only save non-expired entries
+            now = time.time()
+            data = {
+                ip: (ports, ts)
+                for ip, (ports, ts) in self.portscan_cache.items()
+                if now - ts < self.cache_ttl
+            }
+            with open(self.cache_file, 'w') as f:
+                json.dump(data, f)
+        except Exception:
+            pass
+    
+    def _clear_cache(self) -> None:
+        """Clear all cache entries."""
+        self.portscan_cache = {}
+        try:
+            if self.cache_file.exists():
+                self.cache_file.unlink()
+        except Exception:
+            pass
+    
+    def _clear_expired_cache(self) -> None:
+        """Remove expired cache entries."""
+        now = time.time()
+        expired = [
+            ip for ip, (_, ts) in self.portscan_cache.items()
+            if now - ts >= self.cache_ttl
+        ]
+        for ip in expired:
+            del self.portscan_cache[ip]
 
     def _update_rates(self) -> None:
         while not self.stop:
@@ -109,11 +166,18 @@ class TuiApp:
         self.scanning = False
 
     def _portscan_worker(self, ip: str) -> None:
-        # Check cache first
+        # Check cache first (with TTL validation)
         if ip in self.portscan_cache:
-            self.portscan_open = self.portscan_cache[ip]
-            self.portscan_running = False
-            return
+            ports, ts = self.portscan_cache[ip]
+            age = time.time() - ts
+            if age < self.cache_ttl:
+                # Cache is still valid
+                self.portscan_open = ports
+                self.portscan_running = False
+                return
+            else:
+                # Cache expired, remove it
+                del self.portscan_cache[ip]
         
         # top 1000 ports: here we use 1-10000 for comprehensive scan
         ports = list(range(1, 10001))
@@ -127,7 +191,8 @@ class TuiApp:
             openp = []
         
         self.portscan_open = openp
-        self.portscan_cache[ip] = openp  # Cache results
+        self.portscan_cache[ip] = (openp, time.time())  # Cache results with timestamp
+        self._save_cache()  # Persist to disk
         self.portscan_current_port = None
         self.portscan_running = False
 
@@ -400,11 +465,11 @@ class TuiApp:
                     i += 1
                 return f"{bps:6.1f} {units[i]}"
 
-            title = f"netscan-tui  iface={self.iface}  net={self.cidr}  rx={fmt(rx)}  tx={fmt(tx)}  filter={'UP' if self.only_up else 'ALL'}  sort={self.sort_by}{'↓' if self.sort_desc else '↑'}"
+            title = f"netscan-tui  iface={self.iface}  net={self.cidr}  rx={fmt(rx)}  tx={fmt(tx)}  filter={'UP' if self.only_up else 'ALL'}  sort={self.sort_by}{'↓' if self.sort_desc else '↑'}  cache={len(self.portscan_cache)}"
             stdscr.addstr(0, 0, title[: max(0, w - 1)], curses.A_BOLD | cpair(4))
 
             # Help line
-            help_line = "[s]can  [r]efresh  [a]ctive-only  [e]xport CSV  [1-5] sort col  [o]cycle  [O]asc/desc  [Enter] re-scan ports  ↑/↓ select  [q]uit"
+            help_line = "[s]can  [r]efresh  [a]ctive-only  [e]xport  [C]lear cache  [1-5] sort  [o]cycle  [O]asc/desc  [p]orts  ↑/↓ select  [q]uit"
             stdscr.addstr(1, 0, help_line[: max(0, w - 1)], curses.A_DIM | cpair(4))
 
             # Graph lines: RX and TX sparklines
@@ -676,7 +741,16 @@ class TuiApp:
                         else:
                             put("│ ⟳ Scanning ports...", curses.A_DIM | cpair(4))
                     elif self.portscan_target in self.portscan_cache:
-                        put("│ ✓ Cached results", curses.A_DIM | cpair(1))
+                        # Show cache age
+                        _, ts = self.portscan_cache[self.portscan_target]
+                        age = time.time() - ts
+                        if age < 60:
+                            age_str = f"{int(age)}s ago"
+                        elif age < 3600:
+                            age_str = f"{int(age/60)}m ago"
+                        else:
+                            age_str = f"{int(age/3600)}h ago"
+                        put(f"│ ✓ Cached ({age_str})", curses.A_DIM | cpair(1))
                     else:
                         def svc(p: int) -> str:
                             try:
@@ -754,16 +828,27 @@ class TuiApp:
 
             if ch == ord('q'):
                 self.stop = True
+                # Save cache before quitting
+                self._save_cache()
                 break
             elif ch == ord('s') and not self.scanning:
                 threading.Thread(target=self._scan, daemon=True).start()
             elif ch == ord('e'):
                 # Show export dialog
                 self._show_export_dialog(stdscr)
+            elif ch == ord('C'):
+                # Clear cache (Shift+C)
+                cache_count = len(self.portscan_cache)
+                self._clear_cache()
+                self.export_message = f"✓ Cleared {cache_count} cached entries"
+                self.export_message_color = 1
+                self.export_message_time = time.time()
             elif ch == ord('r'):
                 # refresh detection
                 self.iface = get_default_interface() or self.iface
                 self.cidr = get_local_network_cidr() or self.cidr
+                # Also clear expired cache entries
+                self._clear_expired_cache()
             elif ch == ord('a'):
                 self.only_up = not self.only_up
                 self.sel = 0
