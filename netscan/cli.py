@@ -11,6 +11,7 @@ from .netinfo import get_local_network_cidr, get_primary_ipv4
 from .colors import supports_color, paint, Color
 from .resolve import resolve_ptrs
 from .arp import get_arp_table
+from .export import export_to_csv
 
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
@@ -47,6 +48,17 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         "--json",
         action="store_true",
         help="Output results as JSON",
+    )
+    parser.add_argument(
+        "--output-csv",
+        type=str,
+        metavar="FILE",
+        help="Export results to CSV file",
+    )
+    parser.add_argument(
+        "--include-down",
+        action="store_true",
+        help="Include DOWN hosts in CSV export (default: only UP hosts)",
     )
     parser.add_argument(
         "--no-color",
@@ -92,6 +104,16 @@ def main(argv: List[str] | None = None) -> int:
         r["hostname"] = ptr.get(r["ip"]) or None
         r["mac"] = arp_map.get(r["ip"]) or None
 
+    # Export to CSV if requested
+    if ns.output_csv:
+        try:
+            output_path = export_to_csv(results, ns.output_csv, include_down=ns.include_down)
+            color_on = supports_color() and not ns.no_color
+            print(paint(f"✅ Exported to: {output_path}", Color.GREEN, Color.BOLD, enable=color_on))
+        except Exception as e:
+            print(paint(f"❌ Export failed: {e}", Color.RED, Color.BOLD, enable=color_on), file=sys.stderr)
+            return 1
+
     if ns.json:
         print(json.dumps(results, indent=2))
     else:
@@ -110,8 +132,8 @@ def main(argv: List[str] | None = None) -> int:
 
         # Table header
         print()
-    print(paint(f"{'IP Address':<16}  {'Status':<6}  {'Latency':>9}  {'Hostname':<32}  {'MAC':<17}", Color.BOLD, enable=color_on))
-    print(paint("-" * 16 + "  " + "-" * 6 + "  " + "-" * 9 + "  " + "-" * 32 + "  " + "-" * 17, Color.DIM, enable=color_on))
+        print(paint(f"{'IP Address':<16}  {'Status':<6}  {'Latency':>9}  {'Hostname':<32}  {'MAC':<17}", Color.BOLD, enable=color_on))
+        print(paint("-" * 16 + "  " + "-" * 6 + "  " + "-" * 9 + "  " + "-" * 32 + "  " + "-" * 17, Color.DIM, enable=color_on))
 
         def ip_sort_key(ip: str):
             try:
