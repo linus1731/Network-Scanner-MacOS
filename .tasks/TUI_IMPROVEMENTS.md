@@ -174,9 +174,83 @@ self.scan_current_host: Optional[str] = None
 
 ## 📝 Changelog
 
-**2025-10-06** - Initial Implementation
+**2025-10-06** - Phase 2: Persistent Cache & Management ✨
+- ✅ Persistent cache storage (~/.netscan_cache.json)
+- ✅ Cache TTL (1 hour default, configurable)
+- ✅ Cache age display (5s, 3m, 2h ago)
+- ✅ Cache management UI (Shift+C to clear)
+- ✅ Cache statistics in title bar (cache=15)
+- ✅ Automatic expired cache cleanup on refresh
+- ✅ Save cache on quit
+
+**2025-10-06** - Phase 1: Initial Implementation
 - ✅ Auto-Start beim TUI-Start
 - ✅ Host-Fortschrittsanzeige
 - ✅ Port-Scan-Fortschritt
 - ✅ Port-Caching System
+
+---
+
+## 🎯 Phase 2 Details: Persistent Cache
+
+### Cache File Location
+```
+~/.netscan_cache.json
+```
+
+### Cache Format
+```json
+{
+  "192.168.1.1": [[22, 80, 443], 1696615200.0],
+  "192.168.1.2": [[22, 3389], 1696615300.0]
+}
+```
+- Format: `ip -> [ports_list, unix_timestamp]`
+- Human-readable JSON
+- Easy to inspect/edit manually
+
+### TTL Configuration
+Default: **1 hour (3600 seconds)**
+
+Customize in `netscan/tui.py`:
+```python
+self.cache_ttl = 3600  # Change this value
+```
+
+Common values:
+- `300` = 5 minutes (testing)
+- `1800` = 30 minutes
+- `3600` = 1 hour (default)
+- `86400` = 24 hours
+
+### Cache Lifecycle
+1. **On Start**: Load from disk, filter expired
+2. **On Scan**: Check cache, scan if expired/missing
+3. **On Quit**: Save all non-expired entries
+4. **On Refresh ('r')**: Clear expired entries
+5. **On Clear ('C')**: Delete all entries
+
+### New UI Elements
+
+**Title Bar:**
+```
+cache=15  ← Shows cached IP count
+```
+
+**Cache Age:**
+```
+│ ✓ Cached (5s ago)
+│ ✓ Cached (3m ago)
+│ ✓ Cached (2h ago)
+```
+
+**Clear Message:**
+```
+✓ Cleared 15 cached entries
+```
+
+### New Hotkeys
+- **Shift+C**: Clear entire cache
+- **r**: Refresh + cleanup expired
+- **q**: Auto-save before quit
 
