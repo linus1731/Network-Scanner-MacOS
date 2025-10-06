@@ -1,4 +1,3 @@
-# Network-Scanner-MacOS
 Network Scanner (macOS + Linux)
 ================================
 
