@@ -9,6 +9,8 @@ import ipaddress
 from .scanner import scan_cidr
 from .netinfo import get_local_network_cidr, get_primary_ipv4
 from .colors import supports_color, paint, Color
+from .resolve import resolve_ptrs
+from .arp import get_arp_table
 
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
@@ -51,6 +53,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         action="store_true",
         help="Disable colored output",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print debug info (why hostname/MAC is missing)",
+    )
     return parser.parse_args(argv)
 
 
@@ -77,6 +84,14 @@ def main(argv: List[str] | None = None) -> int:
         )
     )
 
+    # Enrich with PTR hostnames and ARP MAC (best-effort; do not block long)
+    ips = [r["ip"] for r in results]
+    ptr = resolve_ptrs(ips)
+    arp_map = get_arp_table()
+    for r in results:
+        r["hostname"] = ptr.get(r["ip"]) or None
+        r["mac"] = arp_map.get(r["ip"]) or None
+
     if ns.json:
         print(json.dumps(results, indent=2))
     else:
@@ -95,8 +110,8 @@ def main(argv: List[str] | None = None) -> int:
 
         # Table header
         print()
-        print(paint(f"{'IP Address':<16}  {'Status':<6}  {'Latency':>9}", Color.BOLD, enable=color_on))
-        print(paint("-" * 16 + "  " + "-" * 6 + "  " + "-" * 9, Color.DIM, enable=color_on))
+    print(paint(f"{'IP Address':<16}  {'Status':<6}  {'Latency':>9}  {'Hostname':<32}  {'MAC':<17}", Color.BOLD, enable=color_on))
+    print(paint("-" * 16 + "  " + "-" * 6 + "  " + "-" * 9 + "  " + "-" * 32 + "  " + "-" * 17, Color.DIM, enable=color_on))
 
         def ip_sort_key(ip: str):
             try:
@@ -118,7 +133,22 @@ def main(argv: List[str] | None = None) -> int:
                     style = Color.MAGENTA
                 lat_s = paint(f"{ms:.2f} ms", style, enable=color_on)
             ip_s = paint(f"{r['ip']:<16}", Color.CYAN, enable=color_on)
-            print(f"{ip_s}  {status:<6}  {lat_s:>9}")
+            host_s = (r.get("hostname") or "-")[:32]
+            mac_s = r.get("mac") or "-"
+            print(f"{ip_s}  {status:<6}  {lat_s:>9}  {host_s:<32}  {mac_s:<17}")
+
+        if ns.debug:
+            print()
+            print(paint("Debug (Hostname/MAC):", Color.YELLOW, Color.BOLD, enable=color_on))
+            for r in results:
+                reasons = []
+                if not r.get("hostname"):
+                    reasons.append("no PTR/mDNS")
+                if not r.get("mac"):
+                    reasons.append("no ARP entry")
+                if not reasons:
+                    reasons.append("ok")
+                print(f"  {r['ip']}: " + ", ".join(reasons))
 
     # Exit non-zero if nothing was reachable
     return 0 if any(r["up"] for r in results) else 2

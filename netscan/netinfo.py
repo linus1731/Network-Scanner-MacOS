@@ -120,3 +120,13 @@ def get_primary_ipv4() -> Optional[str]:
             return src
     # Fallback via UDP trick
     return _primary_ipv4_via_udp()
+
+
+def get_default_interface() -> Optional[str]:
+    """Return the primary network interface used for default route, if detectable."""
+    system = platform.system().lower()
+    if system == "darwin":
+        return _macos_default_iface()
+    else:
+        iface, _ = _linux_iface_from_route()
+        return iface
