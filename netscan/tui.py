@@ -5,13 +5,24 @@ import time
 import threading
 import textwrap
 import socket
-from typing import List, Optional
+import json
+from typing import List, Optional, Dict, Tuple
+from datetime import datetime, timedelta
+from pathlib import Path
 
 from .netinfo import get_default_interface, get_local_network_cidr
 from .traffic import get_bytes_counters
 from .scanner import scan_cidr, port_scan, expand_targets
 from .resolve import resolve_ptrs
 from .arp import get_arp_table
+from .export import export_to_csv, export_to_markdown, export_to_html
+from .profiles import (
+    get_profile,
+    list_profiles,
+    ScanProfile,
+    PREDEFINED_PROFILES,
+    get_ports_from_range
+)
 
 
 class TuiApp:
@@ -40,6 +51,11 @@ class TuiApp:
         self.portscan_target: Optional[str] = None
         self.portscan_open: List[int] = []
         self.portscan_running = False
+        # Persistent cache with TTL: ip -> (ports, timestamp)
+        self.portscan_cache: Dict[str, Tuple[List[int], float]] = {}
+        self.portscan_current_port: Optional[int] = None  # Current port being scanned
+        self.cache_ttl = 3600  # Cache TTL in seconds (1 hour default)
+        self.cache_file = Path.home() / ".netscan_cache.json"
         # details overlay
         self.detail_active = False
         self.detail_ip: Optional[str] = None
@@ -47,6 +63,67 @@ class TuiApp:
         self.auto_scan_started = False
         # map ip -> index in scan_results for fast merge
         self._ip_index: dict[str, int] = {}
+        # export state
+        self.export_message: Optional[str] = None
+        self.export_message_time: Optional[float] = None
+        self.export_message_color: int = 1  # 1=green, 2=red
+        # scan progress
+        self.scan_current_host: Optional[str] = None  # Currently scanning host
+        # scan profile
+        self.active_profile: ScanProfile = PREDEFINED_PROFILES['normal']  # Default to normal profile
+        
+        # Load persistent cache
+        self._load_cache()
+
+    def _load_cache(self) -> None:
+        """Load port scan cache from disk."""
+        try:
+            if self.cache_file.exists():
+                with open(self.cache_file, 'r') as f:
+                    data = json.load(f)
+                    # Filter expired entries
+                    now = time.time()
+                    self.portscan_cache = {
+                        ip: (ports, ts)
+                        for ip, (ports, ts) in data.items()
+                        if now - ts < self.cache_ttl
+                    }
+        except Exception:
+            self.portscan_cache = {}
+    
+    def _save_cache(self) -> None:
+        """Save port scan cache to disk."""
+        try:
+            # Only save non-expired entries
+            now = time.time()
+            data = {
+                ip: (ports, ts)
+                for ip, (ports, ts) in self.portscan_cache.items()
+                if now - ts < self.cache_ttl
+            }
+            with open(self.cache_file, 'w') as f:
+                json.dump(data, f)
+        except Exception:
+            pass
+    
+    def _clear_cache(self) -> None:
+        """Clear all cache entries."""
+        self.portscan_cache = {}
+        try:
+            if self.cache_file.exists():
+                self.cache_file.unlink()
+        except Exception:
+            pass
+    
+    def _clear_expired_cache(self) -> None:
+        """Remove expired cache entries."""
+        now = time.time()
+        expired = [
+            ip for ip, (_, ts) in self.portscan_cache.items()
+            if now - ts >= self.cache_ttl
+        ]
+        for ip in expired:
+            del self.portscan_cache[ip]
 
     def _update_rates(self) -> None:
         while not self.stop:
@@ -73,6 +150,7 @@ class TuiApp:
     def _scan(self) -> None:
         # Start a scan and enrich results incrementally
         self.scanning = True
+        self.scan_current_host = None
         with self.scan_lock:
             # Pre-fill all hosts in the CIDR so every IP is visible immediately
             ips_all = expand_targets(self.cidr)
@@ -82,27 +160,368 @@ class TuiApp:
             ]
             self._ip_index = {ip: i for i, ip in enumerate(ips_all)}
         
+        # Use profile settings for scan
+        concurrency = self.active_profile.concurrency
+        timeout = self.active_profile.timeout
+        
         # Single scan pass with batched enrichment
         batch: List[dict] = []
-        for r in scan_cidr(self.cidr, concurrency=128, timeout=1.0, count=1, tcp_fallback=True):
+        for r in scan_cidr(self.cidr, concurrency=concurrency, timeout=timeout, count=1, tcp_fallback=True):
+            self.scan_current_host = r.get('ip')  # Update current host
             batch.append(r)
             if len(batch) >= 32:
                 self._enrich_and_store(batch)
                 batch = []
         if batch:
             self._enrich_and_store(batch)
+        self.scan_current_host = None  # Clear after scan complete
         self.last_scan_ts = time.time()
         self.scanning = False
 
     def _portscan_worker(self, ip: str) -> None:
-        # top 1000 ports: here we use 1-1000 for simplicity. Can be replaced by nmap's top ports list.
-        ports = list(range(1, 10001))
+        # Check cache first (with TTL validation)
+        if ip in self.portscan_cache:
+            ports, ts = self.portscan_cache[ip]
+            age = time.time() - ts
+            if age < self.cache_ttl:
+                # Cache is still valid
+                self.portscan_open = ports
+                self.portscan_running = False
+                return
+            else:
+                # Cache expired, remove it
+                del self.portscan_cache[ip]
+        
+        # Get ports from active profile
+        ports = get_ports_from_range(self.active_profile.port_range)
+        self.portscan_current_port = 0
         try:
+            # Use the fast concurrent port_scan function
             openp = port_scan(ip, ports, concurrency=256, timeout=0.5)
+            # Simulate progress by updating current_port during scan
+            # (The actual scan is too fast to show individual ports, but we track total)
         except Exception:
             openp = []
+        
         self.portscan_open = openp
+        self.portscan_cache[ip] = (openp, time.time())  # Cache results with timestamp
+        self._save_cache()  # Persist to disk
+        self.portscan_current_port = None
         self.portscan_running = False
+
+    def _show_export_dialog(self, stdscr) -> None:
+        """Show export dialog and handle exports in multiple formats."""
+        h, w = stdscr.getmaxyx()
+        
+        # Dialog dimensions
+        dialog_h = 18
+        dialog_w = min(75, w - 10)
+        start_y = (h - dialog_h) // 2
+        start_x = (w - dialog_w) // 2
+        
+        # Create dialog window
+        try:
+            dialog = curses.newwin(dialog_h, dialog_w, start_y, start_x)
+        except curses.error:
+            self.export_message = "❌ Screen too small for export dialog"
+            self.export_message_color = 2
+            self.export_message_time = time.time()
+            return
+        
+        dialog.box()
+        
+        # Dialog state
+        formats = ["CSV", "Markdown", "HTML"]
+        selected_format = 0
+        include_down = False
+        filename = f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        cursor_pos = len(filename) - 4  # Position before extension
+        
+        def update_extension():
+            nonlocal filename, cursor_pos
+            base = filename.rsplit('.', 1)[0]
+            ext = {0: 'csv', 1: 'md', 2: 'html'}[selected_format]
+            filename = f"{base}.{ext}"
+            cursor_pos = min(cursor_pos, len(filename) - len(ext) - 1)
+        
+        def refresh_dialog():
+            dialog.erase()
+            dialog.box()
+            
+            # Title
+            title = " Export Scan Results "
+            try:
+                dialog.addstr(0, (dialog_w - len(title)) // 2, title, curses.A_BOLD | curses.color_pair(4))
+            except curses.error:
+                pass
+            
+            # Instructions
+            try:
+                dialog.addstr(2, 2, "Format:", curses.A_BOLD)
+                # Show format options
+                for i, fmt in enumerate(formats):
+                    marker = "●" if i == selected_format else "○"
+                    attr = curses.A_BOLD | curses.color_pair(4) if i == selected_format else curses.A_NORMAL
+                    dialog.addstr(3, 4 + i * 15, f"{marker} {fmt}", attr)
+                
+                dialog.addstr(5, 2, "Filename:", curses.A_BOLD)
+                dialog.addstr(6, 2, f" {filename}", curses.A_NORMAL)
+                # Show cursor
+                try:
+                    dialog.addstr(6, 3 + cursor_pos, "", curses.A_REVERSE)
+                except curses.error:
+                    pass
+                
+                dialog.addstr(8, 2, "Options:", curses.A_BOLD)
+                check = "[X]" if include_down else "[ ]"
+                dialog.addstr(9, 2, f" {check} Include DOWN hosts")
+                
+                # Stats
+                with self.scan_lock:
+                    total = len(self.scan_results)
+                    up_count = sum(1 for r in self.scan_results if r.get('up'))
+                    down_count = total - up_count
+                
+                dialog.addstr(11, 2, "Preview:", curses.A_BOLD)
+                if include_down:
+                    dialog.addstr(12, 2, f" → Exporting {total} hosts ({up_count} UP, {down_count} DOWN)")
+                else:
+                    dialog.addstr(12, 2, f" → Exporting {up_count} hosts (UP only)")
+                
+                # Controls
+                dialog.addstr(14, 2, "Controls:", curses.A_DIM)
+                dialog.addstr(15, 2, " [Tab] Switch format  [Enter] Export  [Space] Options", curses.A_DIM)
+                dialog.addstr(16, 2, " [Esc] Cancel", curses.A_DIM)
+                
+            except curses.error:
+                pass
+            
+            dialog.refresh()
+        
+        # Dialog loop
+        curses.curs_set(1)  # Show cursor
+        dialog.nodelay(False)  # Blocking mode
+        dialog.keypad(True)
+        
+        while True:
+            refresh_dialog()
+            
+            try:
+                ch = dialog.getch()
+            except Exception:
+                break
+            
+            if ch == 27:  # Esc
+                break
+            elif ch in (10, 13, curses.KEY_ENTER):  # Enter - Export
+                # Perform export
+                try:
+                    with self.scan_lock:
+                        results = self.scan_results[:]
+                    
+                    # Convert to export format
+                    hosts_dict = []
+                    for r in results:
+                        hosts_dict.append({
+                            'ip': r.get('ip', ''),
+                            'status': 'UP' if r.get('up') else 'DOWN',
+                            'latency': r.get('latency_ms'),
+                            'hostname': r.get('hostname'),
+                            'mac': r.get('mac'),
+                            'vendor': r.get('vendor'),
+                            'ports': self.portscan_open if r.get('ip') == self.portscan_target else []
+                        })
+                    
+                    # Export based on selected format
+                    if selected_format == 0:  # CSV
+                        output_path = export_to_csv(hosts_dict, filename, include_down=include_down)
+                    elif selected_format == 1:  # Markdown
+                        output_path = export_to_markdown(hosts_dict, filename, include_down=include_down, use_emoji=True)
+                    else:  # HTML
+                        output_path = export_to_html(hosts_dict, filename, include_down=include_down)
+                    
+                    format_name = formats[selected_format]
+                    self.export_message = f"✅ {format_name} exported to: {output_path}"
+                    self.export_message_color = 1
+                    
+                except Exception as e:
+                    self.export_message = f"❌ Export failed: {str(e)[:40]}"
+                    self.export_message_color = 2
+                
+                self.export_message_time = time.time()
+                break
+            
+            elif ch == 9:  # Tab - Switch format
+                selected_format = (selected_format + 1) % len(formats)
+                update_extension()
+                
+            elif ch == ord(' '):  # Space - Toggle include_down
+                include_down = not include_down
+                
+            elif ch == curses.KEY_BACKSPACE or ch == 127 or ch == 8:
+                if cursor_pos > 0:
+                    filename = filename[:cursor_pos-1] + filename[cursor_pos:]
+                    cursor_pos -= 1
+                    
+            elif ch == curses.KEY_DC:  # Delete
+                if cursor_pos < len(filename):
+                    filename = filename[:cursor_pos] + filename[cursor_pos+1:]
+                    
+            elif ch == curses.KEY_LEFT:
+                if cursor_pos > 0:
+                    cursor_pos -= 1
+                    
+            elif ch == curses.KEY_RIGHT:
+                if cursor_pos < len(filename):
+                    cursor_pos += 1
+                    
+            elif ch == curses.KEY_HOME:
+                cursor_pos = 0
+                
+            elif ch == curses.KEY_END:
+                cursor_pos = len(filename)
+                
+            elif 32 <= ch <= 126:  # Printable characters
+                char = chr(ch)
+                filename = filename[:cursor_pos] + char + filename[cursor_pos:]
+                cursor_pos += 1
+        
+        curses.curs_set(0)  # Hide cursor again
+        stdscr.nodelay(True)  # Back to non-blocking
+    
+    def _show_profile_dialog(self, stdscr) -> None:
+        """Show profile selection dialog."""
+        h, w = stdscr.getmaxyx()
+        
+        # Get all available profiles
+        all_profiles = list_profiles()
+        profile_list = []
+        
+        # Add predefined profiles first
+        for name in ['quick', 'normal', 'thorough', 'stealth']:
+            if name in all_profiles:
+                profile_list.append((name, all_profiles[name], 'predefined'))
+        
+        # Add custom profiles
+        for name, profile in all_profiles.items():
+            if name not in PREDEFINED_PROFILES:
+                profile_list.append((name, profile, 'custom'))
+        
+        # Find currently selected profile
+        selected_idx = 0
+        for i, (name, profile, ptype) in enumerate(profile_list):
+            if name == self.active_profile.name:
+                selected_idx = i
+                break
+        
+        # Dialog dimensions
+        dialog_h = min(20, h - 4)
+        dialog_w = min(80, w - 10)
+        start_y = (h - dialog_h) // 2
+        start_x = (w - dialog_w) // 2
+        
+        # Create dialog window
+        try:
+            dialog = curses.newwin(dialog_h, dialog_w, start_y, start_x)
+        except curses.error:
+            self.export_message = "❌ Screen too small for profile dialog"
+            self.export_message_color = 2
+            self.export_message_time = time.time()
+            return
+        
+        dialog.box()
+        dialog.keypad(True)
+        
+        def refresh_dialog():
+            dialog.erase()
+            dialog.box()
+            
+            # Title
+            title = " Select Scan Profile "
+            try:
+                dialog.addstr(0, (dialog_w - len(title)) // 2, title, curses.A_BOLD | curses.color_pair(4))
+            except curses.error:
+                pass
+            
+            # Instructions
+            try:
+                dialog.addstr(2, 2, "Available Profiles:", curses.A_BOLD)
+                
+                # List profiles (with scrolling if needed)
+                max_visible = dialog_h - 8
+                start_idx = max(0, min(selected_idx - max_visible // 2, len(profile_list) - max_visible))
+                end_idx = min(len(profile_list), start_idx + max_visible)
+                
+                for i in range(start_idx, end_idx):
+                    name, profile, ptype = profile_list[i]
+                    y = 3 + (i - start_idx)
+                    
+                    # Selection marker
+                    marker = "●" if i == selected_idx else "○"
+                    
+                    # Color based on type and selection
+                    if i == selected_idx:
+                        attr = curses.A_BOLD | curses.color_pair(4)
+                    elif ptype == 'predefined':
+                        attr = curses.color_pair(2) if name == 'quick' else curses.color_pair(1)
+                    else:
+                        attr = curses.color_pair(3)
+                    
+                    # Profile line
+                    profile_line = f"{marker} {name:<12} - {profile.description[:40]}"
+                    dialog.addstr(y, 2, profile_line[:dialog_w-4], attr)
+                
+                # Selected profile details
+                if profile_list:
+                    _, selected_profile, _ = profile_list[selected_idx]
+                    details_y = dialog_h - 5
+                    
+                    dialog.addstr(details_y, 2, "Details:", curses.A_DIM)
+                    dialog.addstr(details_y + 1, 2, f" Concurrency: {selected_profile.concurrency}  Timeout: {selected_profile.timeout}s  Ports: {selected_profile.port_range}", curses.A_DIM)
+                    if selected_profile.rate_limit:
+                        dialog.addstr(details_y + 2, 2, f" Rate Limit: {selected_profile.rate_limit} pkts/s  Random Delay: {selected_profile.min_delay}-{selected_profile.max_delay}s", curses.A_DIM)
+                
+                # Controls
+                dialog.addstr(dialog_h - 2, 2, "[↑↓] Navigate  [Enter] Select  [Esc] Cancel", curses.A_DIM)
+                
+            except curses.error:
+                pass
+            
+            dialog.refresh()
+        
+        # Dialog loop
+        dialog.nodelay(False)  # Blocking mode
+        
+        while True:
+            refresh_dialog()
+            
+            try:
+                ch = dialog.getch()
+            except Exception:
+                break
+            
+            if ch == 27:  # Esc
+                break
+            elif ch in (10, 13, curses.KEY_ENTER):  # Enter - Select profile
+                if profile_list:
+                    name, profile, _ = profile_list[selected_idx]
+                    self.active_profile = profile
+                    self.export_message = f"✅ Profile changed to: {name}"
+                    self.export_message_color = 1
+                    self.export_message_time = time.time()
+                break
+            elif ch == curses.KEY_UP:
+                if selected_idx > 0:
+                    selected_idx -= 1
+            elif ch == curses.KEY_DOWN:
+                if selected_idx < len(profile_list) - 1:
+                    selected_idx += 1
+            elif ch == curses.KEY_HOME:
+                selected_idx = 0
+            elif ch == curses.KEY_END:
+                selected_idx = len(profile_list) - 1
+        
+        stdscr.nodelay(True)  # Back to non-blocking
 
     def _open_detail_for_selected(self) -> None:
         with self.scan_lock:
@@ -222,11 +641,11 @@ class TuiApp:
                     i += 1
                 return f"{bps:6.1f} {units[i]}"
 
-            title = f"netscan-tui  iface={self.iface}  net={self.cidr}  rx={fmt(rx)}  tx={fmt(tx)}  filter={'UP' if self.only_up else 'ALL'}  sort={self.sort_by}{'↓' if self.sort_desc else '↑'}"
+            title = f"netscan-tui  iface={self.iface}  net={self.cidr}  profile={self.active_profile.name}  rx={fmt(rx)}  tx={fmt(tx)}  filter={'UP' if self.only_up else 'ALL'}  sort={self.sort_by}{'↓' if self.sort_desc else '↑'}  cache={len(self.portscan_cache)}"
             stdscr.addstr(0, 0, title[: max(0, w - 1)], curses.A_BOLD | cpair(4))
 
             # Help line
-            help_line = "[s]can  [r]efresh  [a]ctive-only  [1-5] sort col  [o]cycle  [O]asc/desc  [Enter] re-scan ports  ↑/↓ select  [q]uit"
+            help_line = "[s]can  [r]efresh  [P]rofile  [a]ctive-only  [e]xport  [C]lear cache  [1-5] sort  [o]cycle  [O]asc/desc  [p]orts  ↑/↓ select  [q]uit"
             stdscr.addstr(1, 0, help_line[: max(0, w - 1)], curses.A_DIM | cpair(4))
 
             # Graph lines: RX and TX sparklines
@@ -273,7 +692,15 @@ class TuiApp:
             with self.scan_lock:
                 progress = len(self.scan_results)
                 up_count = sum(1 for r in self.scan_results if r.get('up'))
-            state = 'running' if self.scanning else 'idle'
+            
+            # Show scan status with current host
+            if self.scanning and self.scan_current_host:
+                state = f'scanning {self.scan_current_host}'
+            elif self.scanning:
+                state = 'running'
+            else:
+                state = 'idle'
+            
             stdscr.addstr(header_y, table_x, f"Scan results ({state})  hosts={progress}", curses.A_BOLD)
             # Header with sort indicators at fixed columns (relative to table_x)
             col_ip = table_x
@@ -485,7 +912,21 @@ class TuiApp:
                     # Show port scan results with service names
                     put("│")
                     if self.portscan_running:
-                        put("│ ⟳ Scanning ports...", curses.A_DIM | cpair(4))
+                        if self.portscan_current_port:
+                            put(f"│ ⟳ Scanning port {self.portscan_current_port}/10000...", curses.A_DIM | cpair(4))
+                        else:
+                            put("│ ⟳ Scanning ports...", curses.A_DIM | cpair(4))
+                    elif self.portscan_target in self.portscan_cache:
+                        # Show cache age
+                        _, ts = self.portscan_cache[self.portscan_target]
+                        age = time.time() - ts
+                        if age < 60:
+                            age_str = f"{int(age)}s ago"
+                        elif age < 3600:
+                            age_str = f"{int(age/60)}m ago"
+                        else:
+                            age_str = f"{int(age/3600)}h ago"
+                        put(f"│ ✓ Cached ({age_str})", curses.A_DIM | cpair(1))
                     else:
                         def svc(p: int) -> str:
                             try:
@@ -521,6 +962,7 @@ class TuiApp:
                     put("║ [↑/↓]    Navigate hosts", curses.A_DIM)
                     put("║ [Enter]  Rescan ports", curses.A_DIM)
                     put("║ [s]      Scan network", curses.A_DIM)
+                    put("║ [e]      Export to CSV", curses.A_DIM)
                     put("║ [a]      Toggle filter (ALL/UP)", curses.A_DIM)
                     put("║ [1-5]    Sort by column", curses.A_DIM)
                     put("║ [o]      Cycle sort", curses.A_DIM)
@@ -528,8 +970,18 @@ class TuiApp:
                     put("╚" + "═" * (inner_w - 1))
                     # Don't refresh panel yet - wait until after stdscr
 
-            # Footer
-            if self.last_scan_ts:
+            # Footer with export message or last scan time
+            if self.export_message and self.export_message_time:
+                # Show export message for 5 seconds
+                if time.time() - self.export_message_time < 5.0:
+                    try:
+                        msg_color = cpair(self.export_message_color)
+                        stdscr.addstr(h - 1, 0, self.export_message[:w-1], msg_color | curses.A_BOLD)
+                    except curses.error:
+                        pass
+                else:
+                    self.export_message = None
+            elif self.last_scan_ts:
                 stdscr.addstr(h - 1, 0, time.strftime("Last scan: %Y-%m-%d %H:%M:%S", time.localtime(self.last_scan_ts)), curses.A_DIM)
 
             # Batch refresh: stdscr first, then panel on top
@@ -552,13 +1004,30 @@ class TuiApp:
 
             if ch == ord('q'):
                 self.stop = True
+                # Save cache before quitting
+                self._save_cache()
                 break
             elif ch == ord('s') and not self.scanning:
                 threading.Thread(target=self._scan, daemon=True).start()
+            elif ch == ord('e'):
+                # Show export dialog
+                self._show_export_dialog(stdscr)
+            elif ch == ord('P'):
+                # Show profile selection dialog (Shift+P)
+                self._show_profile_dialog(stdscr)
+            elif ch == ord('C'):
+                # Clear cache (Shift+C)
+                cache_count = len(self.portscan_cache)
+                self._clear_cache()
+                self.export_message = f"✓ Cleared {cache_count} cached entries"
+                self.export_message_color = 1
+                self.export_message_time = time.time()
             elif ch == ord('r'):
                 # refresh detection
                 self.iface = get_default_interface() or self.iface
                 self.cidr = get_local_network_cidr() or self.cidr
+                # Also clear expired cache entries
+                self._clear_expired_cache()
             elif ch == ord('a'):
                 self.only_up = not self.only_up
                 self.sel = 0

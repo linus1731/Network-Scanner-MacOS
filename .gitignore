@@ -11,3 +11,13 @@ venv/
 
 # VS Code
 .vscode/
+
+# Test/temporary files
+test_*.html
+test_*.md
+scan_*.md
+*_test.csv
+*_test.md
+
+# User data (not in repo)
+.netscan_cache.json

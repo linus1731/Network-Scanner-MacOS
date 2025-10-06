@@ -1,0 +1,13 @@
+# Home Network Scan Profile
+# Optimized for typical home/small office networks
+# Use case: Managing home network, finding all devices quickly
+
+name: home-network
+description: Optimized for home networks (fast and thorough)
+concurrency: 200             # High concurrency for speed
+timeout: 0.8                 # Short timeout (home networks are fast)
+port_range: top1000          # Comprehensive port coverage
+rate_limit: null             # No rate limiting (safe for home use)
+random_delay: false          # No delays needed
+min_delay: 0.0
+max_delay: 0.0

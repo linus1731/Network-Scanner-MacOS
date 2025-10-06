@@ -11,6 +11,14 @@ from .netinfo import get_local_network_cidr, get_primary_ipv4
 from .colors import supports_color, paint, Color
 from .resolve import resolve_ptrs
 from .arp import get_arp_table
+from .export import export_to_csv, export_to_markdown, export_to_html
+from .profiles import (
+    get_profile,
+    list_profiles,
+    save_custom_profile,
+    ScanProfile,
+    PREDEFINED_PROFILES
+)
 
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
@@ -22,6 +30,24 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         "cidr",
         nargs="?",
         help="CIDR or IP range to scan (optional). Wenn leer, wird das lokale Netz automatisch ermittelt.",
+    )
+    parser.add_argument(
+        "-p",
+        "--profile",
+        type=str,
+        metavar="NAME",
+        help="Use a scan profile (quick, normal, thorough, stealth, or custom)",
+    )
+    parser.add_argument(
+        "--list-profiles",
+        action="store_true",
+        help="List all available scan profiles and exit",
+    )
+    parser.add_argument(
+        "--save-profile",
+        type=str,
+        metavar="NAME",
+        help="Save current settings as a custom profile",
     )
     parser.add_argument(
         "-c",
@@ -49,6 +75,34 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Output results as JSON",
     )
     parser.add_argument(
+        "--output-csv",
+        type=str,
+        metavar="FILE",
+        help="Export results to CSV file",
+    )
+    parser.add_argument(
+        "--output-md",
+        type=str,
+        metavar="FILE",
+        help="Export results to Markdown file",
+    )
+    parser.add_argument(
+        "--output-html",
+        type=str,
+        metavar="FILE",
+        help="Export results to HTML file (interactive report)",
+    )
+    parser.add_argument(
+        "--include-down",
+        action="store_true",
+        help="Include DOWN hosts in export (default: only UP hosts)",
+    )
+    parser.add_argument(
+        "--no-emoji",
+        action="store_true",
+        help="Disable emoji in Markdown export (use UP/DOWN text)",
+    )
+    parser.add_argument(
         "--no-color",
         action="store_true",
         help="Disable colored output",
@@ -63,6 +117,71 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 def main(argv: List[str] | None = None) -> int:
     ns = parse_args(argv if argv is not None else sys.argv[1:])
+    
+    # Handle --list-profiles
+    if ns.list_profiles:
+        color_on = supports_color() and not ns.no_color
+        print(paint("Available Scan Profiles:", Color.BOLD, enable=color_on))
+        print()
+        
+        profiles = list_profiles()
+        
+        # Show predefined profiles first
+        print(paint("Predefined Profiles:", Color.CYAN, Color.BOLD, enable=color_on))
+        for name in ['quick', 'normal', 'thorough', 'stealth']:
+            if name in profiles:
+                profile = profiles[name]
+                print(f"  {paint(name, Color.GREEN, Color.BOLD, enable=color_on):<20} - {profile.description}")
+                print(f"    Concurrency: {profile.concurrency}, Timeout: {profile.timeout}s, Ports: {profile.port_range}")
+                if profile.rate_limit:
+                    print(f"    Rate Limit: {profile.rate_limit} pkts/s")
+                if profile.random_delay:
+                    print(f"    Random Delay: {profile.min_delay}-{profile.max_delay}s")
+                print()
+        
+        # Show custom profiles
+        custom_profiles = {k: v for k, v in profiles.items() if k not in PREDEFINED_PROFILES}
+        if custom_profiles:
+            print(paint("Custom Profiles:", Color.MAGENTA, Color.BOLD, enable=color_on))
+            for name, profile in custom_profiles.items():
+                print(f"  {paint(name, Color.YELLOW, Color.BOLD, enable=color_on):<20} - {profile.description}")
+                print(f"    Concurrency: {profile.concurrency}, Timeout: {profile.timeout}s, Ports: {profile.port_range}")
+                print()
+        
+        return 0
+    
+    # Apply profile settings
+    active_profile = None
+    if ns.profile:
+        active_profile = get_profile(ns.profile)
+        if not active_profile:
+            print(paint(f"❌ Profile '{ns.profile}' not found. Use --list-profiles to see available profiles.", 
+                       Color.RED, Color.BOLD, enable=supports_color()), file=sys.stderr)
+            return 1
+        
+        # Apply profile settings (can be overridden by CLI args)
+        if not any([hasattr(ns, 'concurrency') and ns.concurrency != 128]):  # Check if default
+            ns.concurrency = active_profile.concurrency
+        if not any([hasattr(ns, 'timeout') and ns.timeout != 1.0]):  # Check if default
+            ns.timeout = active_profile.timeout
+        # Note: port_range will be handled in TUI/scanner integration
+    
+    # Handle --save-profile
+    if ns.save_profile:
+        new_profile = ScanProfile(
+            name=ns.save_profile,
+            description=f"Custom profile '{ns.save_profile}'",
+            concurrency=ns.concurrency,
+            timeout=ns.timeout,
+            port_range='top1000',  # Default
+        )
+        
+        if save_custom_profile(new_profile):
+            color_on = supports_color() and not ns.no_color
+            print(paint(f"✅ Profile '{ns.save_profile}' saved successfully!", Color.GREEN, Color.BOLD, enable=color_on))
+        else:
+            print(paint(f"❌ Failed to save profile '{ns.save_profile}'", Color.RED, Color.BOLD, enable=color_on), file=sys.stderr)
+            return 1
 
     target = ns.cidr
     auto_msg = None
@@ -74,6 +193,12 @@ def main(argv: List[str] | None = None) -> int:
         target = cidr
         ip = get_primary_ipv4() or "?"
         auto_msg = f"Automatisch erkannt: {target} (lokale IP: {ip})"
+    
+    # Show active profile message
+    if active_profile:
+        color_on = supports_color() and not ns.no_color
+        profile_msg = f"Using profile: {paint(active_profile.name, Color.CYAN, Color.BOLD, enable=color_on)} - {active_profile.description}"
+        print(profile_msg)
 
     results = list(
         scan_cidr(
@@ -91,6 +216,37 @@ def main(argv: List[str] | None = None) -> int:
     for r in results:
         r["hostname"] = ptr.get(r["ip"]) or None
         r["mac"] = arp_map.get(r["ip"]) or None
+
+    # Export to CSV if requested
+    if ns.output_csv:
+        try:
+            output_path = export_to_csv(results, ns.output_csv, include_down=ns.include_down)
+            color_on = supports_color() and not ns.no_color
+            print(paint(f"✅ CSV exported to: {output_path}", Color.GREEN, Color.BOLD, enable=color_on))
+        except Exception as e:
+            print(paint(f"❌ CSV export failed: {e}", Color.RED, Color.BOLD, enable=color_on), file=sys.stderr)
+            return 1
+
+    # Export to Markdown if requested
+    if ns.output_md:
+        try:
+            use_emoji = not ns.no_emoji
+            output_path = export_to_markdown(results, ns.output_md, include_down=ns.include_down, use_emoji=use_emoji)
+            color_on = supports_color() and not ns.no_color
+            print(paint(f"✅ Markdown exported to: {output_path}", Color.GREEN, Color.BOLD, enable=color_on))
+        except Exception as e:
+            print(paint(f"❌ Markdown export failed: {e}", Color.RED, Color.BOLD, enable=color_on), file=sys.stderr)
+            return 1
+    
+    # Export to HTML if requested
+    if ns.output_html:
+        try:
+            output_path = export_to_html(results, ns.output_html, include_down=ns.include_down)
+            color_on = supports_color() and not ns.no_color
+            print(paint(f"✅ HTML exported to: {output_path}", Color.GREEN, Color.BOLD, enable=color_on))
+        except Exception as e:
+            print(paint(f"❌ HTML export failed: {e}", Color.RED, Color.BOLD, enable=color_on), file=sys.stderr)
+            return 1
 
     if ns.json:
         print(json.dumps(results, indent=2))
@@ -110,8 +266,8 @@ def main(argv: List[str] | None = None) -> int:
 
         # Table header
         print()
-    print(paint(f"{'IP Address':<16}  {'Status':<6}  {'Latency':>9}  {'Hostname':<32}  {'MAC':<17}", Color.BOLD, enable=color_on))
-    print(paint("-" * 16 + "  " + "-" * 6 + "  " + "-" * 9 + "  " + "-" * 32 + "  " + "-" * 17, Color.DIM, enable=color_on))
+        print(paint(f"{'IP Address':<16}  {'Status':<6}  {'Latency':>9}  {'Hostname':<32}  {'MAC':<17}", Color.BOLD, enable=color_on))
+        print(paint("-" * 16 + "  " + "-" * 6 + "  " + "-" * 9 + "  " + "-" * 32 + "  " + "-" * 17, Color.DIM, enable=color_on))
 
         def ip_sort_key(ip: str):
             try:

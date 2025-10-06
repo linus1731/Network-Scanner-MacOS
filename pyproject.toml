@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "netscan"
-version = "0.1.0"
+version = "0.1.2"
 description = "Portable network scanner for macOS and Linux: concurrent ping sweep with latency reporting"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -18,7 +18,9 @@ classifiers = [
   "Operating System :: POSIX :: Linux",
   "Environment :: Console",
 ]
-dependencies = []
+dependencies = [
+  "pyyaml>=6.0"
+]
 
 [project.scripts]
 netscan = "netscan.cli:main"
