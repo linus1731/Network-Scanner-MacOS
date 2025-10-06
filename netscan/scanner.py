@@ -11,6 +11,8 @@ import time
 from dataclasses import dataclass
 from typing import Generator, List, Optional, Iterable
 
+from .ratelimit import get_global_limiter
+
 
 @dataclass(frozen=True)
 class PingResult:
@@ -49,6 +51,10 @@ def _build_ping_cmd(ip: str, count: int, timeout: float) -> List[str]:
 
 
 def ping(ip: str, count: int = 1, timeout: float = 1.0) -> PingResult:
+    # Apply rate limiting
+    limiter = get_global_limiter()
+    limiter.acquire(1)
+    
     cmd = _build_ping_cmd(ip, count=count, timeout=timeout)
     try:
         proc = subprocess.run(
@@ -119,7 +125,11 @@ def expand_targets(target: str) -> List[str]:
 
 def _tcp_probe(ip: str, ports: tuple[int, ...] = (80, 443, 22), timeout: float = 0.3) -> Optional[float]:
     """Try TCP connect to common ports; return latency_ms on first success, else None."""
+    # Apply rate limiting for TCP probes
+    limiter = get_global_limiter()
+    
     for port in ports:
+        limiter.acquire(1)
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(timeout)
@@ -161,6 +171,10 @@ def scan_cidr(target: str, concurrency: int = 128, timeout: float = 1.0, count: 
 
 
 def _tcp_connect(ip: str, port: int, timeout: float = 0.5) -> bool:
+    # Apply rate limiting for port scans
+    limiter = get_global_limiter()
+    limiter.acquire(1)
+    
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(timeout)

@@ -12,6 +12,7 @@ from .colors import supports_color, paint, Color
 from .resolve import resolve_ptrs
 from .arp import get_arp_table
 from .export import export_to_csv, export_to_markdown, export_to_html
+from .ratelimit import get_global_limiter
 from .profiles import (
     get_profile,
     list_profiles,
@@ -70,6 +71,18 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Echo requests per host (default: 1)",
     )
     parser.add_argument(
+        "--rate-limit",
+        type=float,
+        metavar="N",
+        help="Limit scan rate to N requests per second (default: no limit)",
+    )
+    parser.add_argument(
+        "--burst",
+        type=int,
+        metavar="N",
+        help="Maximum burst size for rate limiting (default: rate * 2)",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Output results as JSON",
@@ -117,6 +130,16 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 def main(argv: List[str] | None = None) -> int:
     ns = parse_args(argv if argv is not None else sys.argv[1:])
+    
+    # Configure rate limiting if specified
+    if ns.rate_limit is not None:
+        limiter = get_global_limiter()
+        burst = ns.burst if ns.burst is not None else int(ns.rate_limit * 2)
+        limiter.set_rate(ns.rate_limit, burst)
+        
+        color_on = supports_color() and not ns.no_color
+        print(paint(f"⚙️  Rate limiting: {ns.rate_limit} req/s (burst: {burst})", 
+                   Color.CYAN, enable=color_on))
     
     # Handle --list-profiles
     if ns.list_profiles:
