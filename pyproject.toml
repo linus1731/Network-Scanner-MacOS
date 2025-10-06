@@ -18,7 +18,9 @@ classifiers = [
   "Operating System :: POSIX :: Linux",
   "Environment :: Console",
 ]
-dependencies = []
+dependencies = [
+  "pyyaml>=6.0"
+]
 
 [project.scripts]
 netscan = "netscan.cli:main"

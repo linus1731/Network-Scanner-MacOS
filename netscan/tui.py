@@ -16,6 +16,13 @@ from .scanner import scan_cidr, port_scan, expand_targets
 from .resolve import resolve_ptrs
 from .arp import get_arp_table
 from .export import export_to_csv, export_to_markdown, export_to_html
+from .profiles import (
+    get_profile,
+    list_profiles,
+    ScanProfile,
+    PREDEFINED_PROFILES,
+    get_ports_from_range
+)
 
 
 class TuiApp:
@@ -62,6 +69,8 @@ class TuiApp:
         self.export_message_color: int = 1  # 1=green, 2=red
         # scan progress
         self.scan_current_host: Optional[str] = None  # Currently scanning host
+        # scan profile
+        self.active_profile: ScanProfile = PREDEFINED_PROFILES['normal']  # Default to normal profile
         
         # Load persistent cache
         self._load_cache()
@@ -151,9 +160,13 @@ class TuiApp:
             ]
             self._ip_index = {ip: i for i, ip in enumerate(ips_all)}
         
+        # Use profile settings for scan
+        concurrency = self.active_profile.concurrency
+        timeout = self.active_profile.timeout
+        
         # Single scan pass with batched enrichment
         batch: List[dict] = []
-        for r in scan_cidr(self.cidr, concurrency=128, timeout=1.0, count=1, tcp_fallback=True):
+        for r in scan_cidr(self.cidr, concurrency=concurrency, timeout=timeout, count=1, tcp_fallback=True):
             self.scan_current_host = r.get('ip')  # Update current host
             batch.append(r)
             if len(batch) >= 32:
@@ -179,8 +192,8 @@ class TuiApp:
                 # Cache expired, remove it
                 del self.portscan_cache[ip]
         
-        # top 1000 ports: here we use 1-10000 for comprehensive scan
-        ports = list(range(1, 10001))
+        # Get ports from active profile
+        ports = get_ports_from_range(self.active_profile.port_range)
         self.portscan_current_port = 0
         try:
             # Use the fast concurrent port_scan function
@@ -375,6 +388,140 @@ class TuiApp:
         
         curses.curs_set(0)  # Hide cursor again
         stdscr.nodelay(True)  # Back to non-blocking
+    
+    def _show_profile_dialog(self, stdscr) -> None:
+        """Show profile selection dialog."""
+        h, w = stdscr.getmaxyx()
+        
+        # Get all available profiles
+        all_profiles = list_profiles()
+        profile_list = []
+        
+        # Add predefined profiles first
+        for name in ['quick', 'normal', 'thorough', 'stealth']:
+            if name in all_profiles:
+                profile_list.append((name, all_profiles[name], 'predefined'))
+        
+        # Add custom profiles
+        for name, profile in all_profiles.items():
+            if name not in PREDEFINED_PROFILES:
+                profile_list.append((name, profile, 'custom'))
+        
+        # Find currently selected profile
+        selected_idx = 0
+        for i, (name, profile, ptype) in enumerate(profile_list):
+            if name == self.active_profile.name:
+                selected_idx = i
+                break
+        
+        # Dialog dimensions
+        dialog_h = min(20, h - 4)
+        dialog_w = min(80, w - 10)
+        start_y = (h - dialog_h) // 2
+        start_x = (w - dialog_w) // 2
+        
+        # Create dialog window
+        try:
+            dialog = curses.newwin(dialog_h, dialog_w, start_y, start_x)
+        except curses.error:
+            self.export_message = "❌ Screen too small for profile dialog"
+            self.export_message_color = 2
+            self.export_message_time = time.time()
+            return
+        
+        dialog.box()
+        dialog.keypad(True)
+        
+        def refresh_dialog():
+            dialog.erase()
+            dialog.box()
+            
+            # Title
+            title = " Select Scan Profile "
+            try:
+                dialog.addstr(0, (dialog_w - len(title)) // 2, title, curses.A_BOLD | curses.color_pair(4))
+            except curses.error:
+                pass
+            
+            # Instructions
+            try:
+                dialog.addstr(2, 2, "Available Profiles:", curses.A_BOLD)
+                
+                # List profiles (with scrolling if needed)
+                max_visible = dialog_h - 8
+                start_idx = max(0, min(selected_idx - max_visible // 2, len(profile_list) - max_visible))
+                end_idx = min(len(profile_list), start_idx + max_visible)
+                
+                for i in range(start_idx, end_idx):
+                    name, profile, ptype = profile_list[i]
+                    y = 3 + (i - start_idx)
+                    
+                    # Selection marker
+                    marker = "●" if i == selected_idx else "○"
+                    
+                    # Color based on type and selection
+                    if i == selected_idx:
+                        attr = curses.A_BOLD | curses.color_pair(4)
+                    elif ptype == 'predefined':
+                        attr = curses.color_pair(2) if name == 'quick' else curses.color_pair(1)
+                    else:
+                        attr = curses.color_pair(3)
+                    
+                    # Profile line
+                    profile_line = f"{marker} {name:<12} - {profile.description[:40]}"
+                    dialog.addstr(y, 2, profile_line[:dialog_w-4], attr)
+                
+                # Selected profile details
+                if profile_list:
+                    _, selected_profile, _ = profile_list[selected_idx]
+                    details_y = dialog_h - 5
+                    
+                    dialog.addstr(details_y, 2, "Details:", curses.A_DIM)
+                    dialog.addstr(details_y + 1, 2, f" Concurrency: {selected_profile.concurrency}  Timeout: {selected_profile.timeout}s  Ports: {selected_profile.port_range}", curses.A_DIM)
+                    if selected_profile.rate_limit:
+                        dialog.addstr(details_y + 2, 2, f" Rate Limit: {selected_profile.rate_limit} pkts/s  Random Delay: {selected_profile.min_delay}-{selected_profile.max_delay}s", curses.A_DIM)
+                
+                # Controls
+                dialog.addstr(dialog_h - 2, 2, "[↑↓] Navigate  [Enter] Select  [Esc] Cancel", curses.A_DIM)
+                
+            except curses.error:
+                pass
+            
+            dialog.refresh()
+        
+        # Dialog loop
+        dialog.nodelay(False)  # Blocking mode
+        
+        while True:
+            refresh_dialog()
+            
+            try:
+                ch = dialog.getch()
+            except Exception:
+                break
+            
+            if ch == 27:  # Esc
+                break
+            elif ch in (10, 13, curses.KEY_ENTER):  # Enter - Select profile
+                if profile_list:
+                    name, profile, _ = profile_list[selected_idx]
+                    self.active_profile = profile
+                    self.export_message = f"✅ Profile changed to: {name}"
+                    self.export_message_color = 1
+                    self.export_message_time = time.time()
+                break
+            elif ch == curses.KEY_UP:
+                if selected_idx > 0:
+                    selected_idx -= 1
+            elif ch == curses.KEY_DOWN:
+                if selected_idx < len(profile_list) - 1:
+                    selected_idx += 1
+            elif ch == curses.KEY_HOME:
+                selected_idx = 0
+            elif ch == curses.KEY_END:
+                selected_idx = len(profile_list) - 1
+        
+        stdscr.nodelay(True)  # Back to non-blocking
 
     def _open_detail_for_selected(self) -> None:
         with self.scan_lock:
@@ -494,11 +641,11 @@ class TuiApp:
                     i += 1
                 return f"{bps:6.1f} {units[i]}"
 
-            title = f"netscan-tui  iface={self.iface}  net={self.cidr}  rx={fmt(rx)}  tx={fmt(tx)}  filter={'UP' if self.only_up else 'ALL'}  sort={self.sort_by}{'↓' if self.sort_desc else '↑'}  cache={len(self.portscan_cache)}"
+            title = f"netscan-tui  iface={self.iface}  net={self.cidr}  profile={self.active_profile.name}  rx={fmt(rx)}  tx={fmt(tx)}  filter={'UP' if self.only_up else 'ALL'}  sort={self.sort_by}{'↓' if self.sort_desc else '↑'}  cache={len(self.portscan_cache)}"
             stdscr.addstr(0, 0, title[: max(0, w - 1)], curses.A_BOLD | cpair(4))
 
             # Help line
-            help_line = "[s]can  [r]efresh  [a]ctive-only  [e]xport  [C]lear cache  [1-5] sort  [o]cycle  [O]asc/desc  [p]orts  ↑/↓ select  [q]uit"
+            help_line = "[s]can  [r]efresh  [P]rofile  [a]ctive-only  [e]xport  [C]lear cache  [1-5] sort  [o]cycle  [O]asc/desc  [p]orts  ↑/↓ select  [q]uit"
             stdscr.addstr(1, 0, help_line[: max(0, w - 1)], curses.A_DIM | cpair(4))
 
             # Graph lines: RX and TX sparklines
@@ -865,6 +1012,9 @@ class TuiApp:
             elif ch == ord('e'):
                 # Show export dialog
                 self._show_export_dialog(stdscr)
+            elif ch == ord('P'):
+                # Show profile selection dialog (Shift+P)
+                self._show_profile_dialog(stdscr)
             elif ch == ord('C'):
                 # Clear cache (Shift+C)
                 cache_count = len(self.portscan_cache)

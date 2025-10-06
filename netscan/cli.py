@@ -12,6 +12,13 @@ from .colors import supports_color, paint, Color
 from .resolve import resolve_ptrs
 from .arp import get_arp_table
 from .export import export_to_csv, export_to_markdown, export_to_html
+from .profiles import (
+    get_profile,
+    list_profiles,
+    save_custom_profile,
+    ScanProfile,
+    PREDEFINED_PROFILES
+)
 
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
@@ -23,6 +30,24 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         "cidr",
         nargs="?",
         help="CIDR or IP range to scan (optional). Wenn leer, wird das lokale Netz automatisch ermittelt.",
+    )
+    parser.add_argument(
+        "-p",
+        "--profile",
+        type=str,
+        metavar="NAME",
+        help="Use a scan profile (quick, normal, thorough, stealth, or custom)",
+    )
+    parser.add_argument(
+        "--list-profiles",
+        action="store_true",
+        help="List all available scan profiles and exit",
+    )
+    parser.add_argument(
+        "--save-profile",
+        type=str,
+        metavar="NAME",
+        help="Save current settings as a custom profile",
     )
     parser.add_argument(
         "-c",
@@ -92,6 +117,71 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 def main(argv: List[str] | None = None) -> int:
     ns = parse_args(argv if argv is not None else sys.argv[1:])
+    
+    # Handle --list-profiles
+    if ns.list_profiles:
+        color_on = supports_color() and not ns.no_color
+        print(paint("Available Scan Profiles:", Color.BOLD, enable=color_on))
+        print()
+        
+        profiles = list_profiles()
+        
+        # Show predefined profiles first
+        print(paint("Predefined Profiles:", Color.CYAN, Color.BOLD, enable=color_on))
+        for name in ['quick', 'normal', 'thorough', 'stealth']:
+            if name in profiles:
+                profile = profiles[name]
+                print(f"  {paint(name, Color.GREEN, Color.BOLD, enable=color_on):<20} - {profile.description}")
+                print(f"    Concurrency: {profile.concurrency}, Timeout: {profile.timeout}s, Ports: {profile.port_range}")
+                if profile.rate_limit:
+                    print(f"    Rate Limit: {profile.rate_limit} pkts/s")
+                if profile.random_delay:
+                    print(f"    Random Delay: {profile.min_delay}-{profile.max_delay}s")
+                print()
+        
+        # Show custom profiles
+        custom_profiles = {k: v for k, v in profiles.items() if k not in PREDEFINED_PROFILES}
+        if custom_profiles:
+            print(paint("Custom Profiles:", Color.MAGENTA, Color.BOLD, enable=color_on))
+            for name, profile in custom_profiles.items():
+                print(f"  {paint(name, Color.YELLOW, Color.BOLD, enable=color_on):<20} - {profile.description}")
+                print(f"    Concurrency: {profile.concurrency}, Timeout: {profile.timeout}s, Ports: {profile.port_range}")
+                print()
+        
+        return 0
+    
+    # Apply profile settings
+    active_profile = None
+    if ns.profile:
+        active_profile = get_profile(ns.profile)
+        if not active_profile:
+            print(paint(f"❌ Profile '{ns.profile}' not found. Use --list-profiles to see available profiles.", 
+                       Color.RED, Color.BOLD, enable=supports_color()), file=sys.stderr)
+            return 1
+        
+        # Apply profile settings (can be overridden by CLI args)
+        if not any([hasattr(ns, 'concurrency') and ns.concurrency != 128]):  # Check if default
+            ns.concurrency = active_profile.concurrency
+        if not any([hasattr(ns, 'timeout') and ns.timeout != 1.0]):  # Check if default
+            ns.timeout = active_profile.timeout
+        # Note: port_range will be handled in TUI/scanner integration
+    
+    # Handle --save-profile
+    if ns.save_profile:
+        new_profile = ScanProfile(
+            name=ns.save_profile,
+            description=f"Custom profile '{ns.save_profile}'",
+            concurrency=ns.concurrency,
+            timeout=ns.timeout,
+            port_range='top1000',  # Default
+        )
+        
+        if save_custom_profile(new_profile):
+            color_on = supports_color() and not ns.no_color
+            print(paint(f"✅ Profile '{ns.save_profile}' saved successfully!", Color.GREEN, Color.BOLD, enable=color_on))
+        else:
+            print(paint(f"❌ Failed to save profile '{ns.save_profile}'", Color.RED, Color.BOLD, enable=color_on), file=sys.stderr)
+            return 1
 
     target = ns.cidr
     auto_msg = None
@@ -103,6 +193,12 @@ def main(argv: List[str] | None = None) -> int:
         target = cidr
         ip = get_primary_ipv4() or "?"
         auto_msg = f"Automatisch erkannt: {target} (lokale IP: {ip})"
+    
+    # Show active profile message
+    if active_profile:
+        color_on = supports_color() and not ns.no_color
+        profile_msg = f"Using profile: {paint(active_profile.name, Color.CYAN, Color.BOLD, enable=color_on)} - {active_profile.description}"
+        print(profile_msg)
 
     results = list(
         scan_cidr(
