@@ -45,12 +45,12 @@
   - [x] 1.2.5 Unit-Tests schreiben
 
 - [ ] **1.3 HTML-Export**
-  - [ ] 1.3.1 HTML-Template mit CSS
-  - [ ] 1.3.2 CLI-Option `--output-html <datei>`
-  - [ ] 1.3.3 Interaktive sortierbare Tabelle (JS)
-  - [ ] 1.3.4 Responsive Design
-  - [ ] 1.3.5 Farbcodierung wie TUI
-  - [ ] 1.3.6 Unit-Tests schreiben
+  - [x] 1.3.1 HTML-Template mit CSS
+  - [x] 1.3.2 CLI-Option `--output-html <datei>`
+  - [x] 1.3.3 Interaktive sortierbare Tabelle (JS)
+  - [x] 1.3.4 Responsive Design
+  - [x] 1.3.5 Farbcodierung wie TUI
+  - [x] 1.3.6 Unit-Tests schreiben
 
 - [x] **1.4 TUI-Export**
   - [x] 1.4.1 Hotkey `e` für Export-Menü
