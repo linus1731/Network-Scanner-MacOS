@@ -24,6 +24,9 @@ from .profiles import (
     PREDEFINED_PROFILES,
     get_ports_from_range
 )
+from .tui_views import ViewManager
+from .dashboard_views import DashboardView, HostListView, DetailView
+from .activity import ActivityFeed
 
 
 class TuiApp:
@@ -76,6 +79,15 @@ class TuiApp:
         # rate limiting
         self.rate_limiter = get_global_limiter()
         self.rate_limit_enabled = False  # Start with no limit
+        
+        # View system and activity feed
+        self.view_manager = ViewManager()
+        self.activity_feed = ActivityFeed()
+        
+        # Register views (hosts first so it's the default)
+        self.view_manager.register_view(HostListView())
+        self.view_manager.register_view(DashboardView())
+        self.view_manager.register_view(DetailView())
         
         # Load persistent cache
         self._load_cache()
@@ -156,6 +168,14 @@ class TuiApp:
         # Start a scan and enrich results incrementally
         self.scanning = True
         self.scan_current_host = None
+        
+        # Add activity event for scan start
+        self.activity_feed.add(
+            event_type="scan",
+            message=f"Scan started: {self.cidr} (profile: {self.active_profile.name})",
+            severity="info"
+        )
+        
         with self.scan_lock:
             # Pre-fill all hosts in the CIDR so every IP is visible immediately
             ips_all = expand_targets(self.cidr)
@@ -182,6 +202,16 @@ class TuiApp:
         self.scan_current_host = None  # Clear after scan complete
         self.last_scan_ts = time.time()
         self.scanning = False
+        
+        # Add activity event for scan complete
+        with self.scan_lock:
+            total = len(self.scan_results)
+            up = sum(1 for r in self.scan_results if r.get('up'))
+        self.activity_feed.add(
+            event_type="scan",
+            message=f"Scan complete: {up}/{total} hosts up",
+            severity="success"
+        )
 
     def _portscan_worker(self, ip: str) -> None:
         # Check cache first (with TTL validation)
@@ -349,9 +379,24 @@ class TuiApp:
                     self.export_message = f"✅ {format_name} exported to: {output_path}"
                     self.export_message_color = 1
                     
+                    # Add activity event for successful export
+                    export_count = up_count if not include_down else total
+                    self.activity_feed.add(
+                        event_type="export",
+                        message=f"Exported {export_count} hosts to {format_name}: {output_path}",
+                        severity="success"
+                    )
+                    
                 except Exception as e:
                     self.export_message = f"❌ Export failed: {str(e)[:40]}"
                     self.export_message_color = 2
+                    
+                    # Add activity event for failed export
+                    self.activity_feed.add(
+                        event_type="export",
+                        message=f"Export failed: {str(e)[:50]}",
+                        severity="error"
+                    )
                 
                 self.export_message_time = time.time()
                 break
@@ -514,6 +559,13 @@ class TuiApp:
                     self.export_message = f"✅ Profile changed to: {name}"
                     self.export_message_color = 1
                     self.export_message_time = time.time()
+                    
+                    # Add activity event for profile change
+                    self.activity_feed.add(
+                        event_type="profile",
+                        message=f"Profile changed to: {name}",
+                        severity="info"
+                    )
                 break
             elif ch == curses.KEY_UP:
                 if selected_idx > 0:
@@ -665,6 +717,46 @@ class TuiApp:
             help_line = "[s]can  [r]efresh  [P]rofile  [+/-] rate  [a]ctive-only  [e]xport  [C]lear cache  [1-5] sort  [o]cycle  [O]asc/desc  [p]orts  ↑/↓ select  [q]uit"
             stdscr.addstr(1, 0, help_line[: max(0, w - 1)], curses.A_DIM | cpair(4))
 
+            # View tabs (F1-F3)
+            tab_bar = self.view_manager.get_view_tabs()
+            stdscr.addstr(2, 0, tab_bar[: max(0, w - 1)], cpair(3) | curses.A_BOLD)
+
+            # Check if we're in dashboard view - if so, delegate to view manager
+            current_view = self.view_manager.get_current_view()
+            if current_view and current_view.name in ['dashboard', 'details']:
+                # These views handle their own drawing entirely
+                self.view_manager.draw(stdscr, self)
+                # Skip the rest of the traditional drawing
+                stdscr.refresh()
+                ch = stdscr.getch()
+                
+                # Handle view switching first
+                if ch == curses.KEY_F1 or ch == 265:  # F1 - Dashboard
+                    self.view_manager.switch_to('dashboard', self)
+                    continue
+                elif ch == curses.KEY_F2 or ch == 266:  # F2 - Host List
+                    self.view_manager.switch_to('hosts', self)
+                    continue
+                elif ch == curses.KEY_F3 or ch == 267:  # F3 - Details
+                    self.view_manager.switch_to('details', self)
+                    continue
+                elif ch == 9:  # Tab - cycle next
+                    self.view_manager.cycle_next(self)
+                    continue
+                elif ch == 353:  # Shift+Tab - cycle prev (KEY_BTAB)
+                    self.view_manager.cycle_prev(self)
+                    continue
+                
+                # Let view handle other input
+                if current_view.handle_input(ch, self):
+                    continue
+                
+                # Fall through to global handlers
+                if ch == ord('q'):
+                    break
+                continue
+
+            # For 'hosts' view, render using legacy table code
             # Graph lines: RX and TX sparklines
             # Build prettier graphs: labels + current + spark + max scale
             # determine dynamic widths based on window
@@ -1018,6 +1110,23 @@ class TuiApp:
                 ch = stdscr.getch()
             except Exception:
                 ch = -1
+
+            # View switching (F1-F3, Tab)
+            if ch == curses.KEY_F1 or ch == 265:  # F1 - Dashboard
+                self.view_manager.switch_to('dashboard', self)
+                continue
+            elif ch == curses.KEY_F2 or ch == 266:  # F2 - Host List
+                self.view_manager.switch_to('hosts', self)
+                continue
+            elif ch == curses.KEY_F3 or ch == 267:  # F3 - Details
+                self.view_manager.switch_to('details', self)
+                continue
+            elif ch == 9:  # Tab - cycle next
+                self.view_manager.cycle_next(self)
+                continue
+            elif ch == 353:  # Shift+Tab - cycle prev (KEY_BTAB)
+                self.view_manager.cycle_prev(self)
+                continue
 
             if ch == ord('q'):
                 self.stop = True

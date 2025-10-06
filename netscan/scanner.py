@@ -207,3 +207,26 @@ def port_scan(ip: str, ports: Iterable[int], concurrency: int = 256, timeout: fl
                 pass
     open_ports.sort()
     return open_ports
+
+
+# Common port to service name mapping
+_SERVICE_MAP = {
+    21: 'ftp', 22: 'ssh', 23: 'telnet', 25: 'smtp',
+    53: 'domain', 80: 'http', 110: 'pop3', 143: 'imap',
+    443: 'https', 445: 'smb', 3306: 'mysql', 3389: 'rdp',
+    5432: 'postgresql', 5900: 'vnc', 6379: 'redis',
+    8080: 'http-proxy', 8443: 'https-alt', 27017: 'mongodb'
+}
+
+
+def get_service_name(port: int) -> str:
+    """
+    Get the common service name for a port number.
+    
+    Args:
+        port: Port number
+        
+    Returns:
+        Service name (e.g., 'http', 'ssh') or 'port-XXXX' if unknown
+    """
+    return _SERVICE_MAP.get(port, f'port-{port}')
