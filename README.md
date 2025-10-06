@@ -2,7 +2,7 @@
 
 Ein moderner, stabiler und erweiterbarer Netzwerkscanner für macOS und Linux mit interaktiver Terminal-UI. Führt parallele Ping-Sweeps aus und bietet detaillierte Host-Informationen inklusive Port-Scanning.
 
-![Version](https://img.shields.io/badge/version-0.1.1-blue)
+![Version](https://img.shields.io/badge/version-0.1.2-blue)
 ![Python](https://img.shields.io/badge/python-3.9+-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
@@ -10,11 +10,14 @@ Ein moderner, stabiler und erweiterbarer Netzwerkscanner für macOS und Linux mi
 
 ### Kern-Funktionen
 - **Parallele Netzwerk-Scans** mit konfigurierbarer Concurrency
+- **Scan-Profile**: Vordefinierte Profile (Quick/Normal/Thorough/Stealth) für verschiedene Einsatzzwecke
+- **Export-Formate**: CSV, Markdown und HTML für professionelle Berichte
 - **Flexible Zielangabe**: CIDR, IP-Bereiche (z.B. `192.168.1.10-50`) und einzelne IPs
 - **Automatische Netz-Erkennung** (ohne Argumente wird das lokale Netz gescannt)
 - **Comprehensive Port-Scanning**: Top 10.000 Ports mit Service-Erkennung
+- **Persistent Cache**: Port-Scan-Ergebnisse werden zwischengespeichert (1 Stunde TTL)
 - Hostname- und MAC-Auflösung via Reverse DNS, mDNS und ARP
-- **Keine externen Abhängigkeiten** (nur Python-Standardbibliothek)
+- **Minimal Dependencies**: Nur PyYAML (für Profile-Konfiguration)
 
 ### Interaktive TUI (Terminal User Interface)
 - **Modernes Split-Panel Layout**:
@@ -25,18 +28,25 @@ Ein moderner, stabiler und erweiterbarer Netzwerkscanner für macOS und Linux mi
     - Liste aller offenen Ports mit Service-Namen
   - **Rechtes Panel**: Scrollbare Host-Liste (bis zu 254 Hosts)
 - **Live-Netzwerk-Traffic** mit geglätteten Sparkline-Graphen (RX/TX)
-- **Echtzeit-Updates** während des Scannens
-- **Intelligente Port-Scanning**: Automatischer Port-Scan beim Navigieren zwischen Hosts
+- **Echtzeit-Updates** während des Scannens mit Fortschrittsanzeige
+- **Scan-Profile**: Schnellwahl mit Shift+P (Quick/Normal/Thorough/Stealth)
+- **Export-Dialog**: Shift+E für interaktiven Export (CSV/Markdown/HTML)
+- **Intelligente Port-Scanning**: Automatischer Port-Scan mit persistentem Cache
+- **Cache-Management**: Shift+C zum Löschen, Anzeige des Cache-Alters
 - **Flexible Sortierung** nach IP, Status, Latenz, Hostname oder MAC
 - **Filter-Optionen**: Alle Hosts oder nur aktive (UP) Hosts anzeigen
 
 ### Ausgabe-Optionen
+- **CSV-Export**: Strukturierte Daten für Spreadsheets und Datenbanken
+- **Markdown-Export**: GitHub-freundliche Dokumentation mit Tabellen
+- **HTML-Export**: Interaktive Berichte mit Sortierung und Suchfunktion
 - Farbige, übersichtliche Tabelle (CLI)
 - JSON-Ausgabe für Automatisierung
 - Debug-Modus mit detaillierten Informationen
 
 ## Voraussetzungen
 - Python 3.9 oder neuer
+- PyYAML (`pip install pyyaml`)
 - System-Ping vorhanden (macOS: `/sbin/ping`, Linux: `/bin/ping`)
 - Optional (für bessere Hostnamen auf Linux): `avahi-utils` (`avahi-resolve-address`)
 
@@ -62,6 +72,21 @@ netscan-tui   # interaktive Terminal starten
 ```bash
 # Gesamtes /24-Netz scannen
 netscan 192.168.1.0/24
+
+# Mit Scan-Profil (quick/normal/thorough/stealth)
+netscan --profile quick
+netscan --profile thorough --output-html audit.html
+
+# Alle verfügbaren Profile anzeigen
+netscan --list-profiles
+
+# Eigenes Profil speichern
+netscan --save-profile my-profile -c 100 -t 1.5
+
+# Export-Optionen
+netscan 192.168.1.0/24 --output-csv scan.csv
+netscan 192.168.1.0/24 --output-md scan.md
+netscan 192.168.1.0/24 --output-html scan.html
 
 # Bereichs-Scan
 netscan 192.168.1.10-192.168.1.50
@@ -91,6 +116,9 @@ netscan-tui
 | `s` | Netzwerk-Scan starten |
 | `r` | Interface/Netz neu erkennen |
 | `a` | Filter umschalten (ALL ↔ UP) |
+| `Shift+P` | Scan-Profil auswählen (Quick/Normal/Thorough/Stealth) |
+| `e` | Export-Dialog öffnen (CSV/Markdown/HTML) |
+| `Shift+C` | Port-Scan-Cache löschen |
 | `↑`/`↓` oder `j`/`k` | Host auswählen |
 | `Enter` | Ports des ausgewählten Hosts neu scannen |
 | `1`-`5` | Sortierspalte wählen (1=IP, 2=Status, 3=Latenz, 4=Hostname, 5=MAC) |
@@ -101,15 +129,60 @@ netscan-tui
 #### TUI-Features im Detail
 - **Live-Traffic-Graphen**: Geglättete Sparklines für RX (magenta) und TX (blau) mit aktuellem Wert und dynamischem Maximum
 - **Auto-Port-Scan**: Beim Navigieren zwischen Hosts werden automatisch die Ports gescannt
+- **Persistent Cache**: Port-Scan-Ergebnisse werden für 1 Stunde gespeichert (~/.netscan_cache.json)
+- **Scan-Profile**: Schnellwahl optimierter Einstellungen für verschiedene Szenarien
+- **Export-Dialog**: Interaktiver Export mit Format-Auswahl und Dateinamen-Editor
 - **Detailliertes Host-Panel**: Zeigt alle relevanten Informationen zum ausgewählten Host
 - **Service-Erkennung**: Bekannte Services werden automatisch erkannt (SSH, HTTP, HTTPS, MySQL, PostgreSQL, RDP, etc.)
 - **Responsive Layout**: Passt sich automatisch an die Terminal-Größe an
+
+## Scan-Profile
+
+### Vordefinierte Profile
+
+| Profil | Beschreibung | Concurrency | Timeout | Ports | Dauer | Einsatzzweck |
+|--------|--------------|-------------|---------|-------|-------|--------------|
+| **Quick** 🚀 | Schneller Scan | 256 | 0.5s | Top 100 | <1 min | Gesundheitschecks, schnelle Übersicht |
+| **Normal** ⚖️ | Ausgewogen | 128 | 1.0s | Top 1000 | 2-3 min | Tägliches Monitoring, Standard-Scans |
+| **Thorough** 🔍 | Tiefgehend | 64 | 2.0s | 1-10000 | 5-10 min | Sicherheits-Audits, vollständiges Inventar |
+| **Stealth** 🥷 | Unaufällig | 10 | 3.0s | Top 1000 | 10-15 min | IDS-Vermeidung, Produktions-Scans |
+
+### Custom Profile
+
+Eigene Profile können gespeichert und wiederverwendet werden:
+
+```bash
+# Profil mit eigenen Einstellungen speichern
+netscan --save-profile my-profile -c 150 -t 1.2
+
+# Gespeichertes Profil verwenden
+netscan --profile my-profile
+
+# Alle Profile anzeigen (inkl. custom)
+netscan --list-profiles
+```
+
+Profile werden in `~/.netscan/profiles/` als YAML-Dateien gespeichert.
+
+Beispiel-Profile finden Sie in `examples/custom-profiles/`:
+- **production-safe**: Konservative Einstellungen für Live-Systeme
+- **home-network**: Optimiert für Heimnetzwerke
+- **pentest-deep**: Umfassend für Security-Tests
+- **iot-discovery**: Geduldig für IoT-Geräte
 
 ## CLI-Optionen
 - `cidr`: Ziel(e) als CIDR/Range/IP
 - `-c`/`--concurrency`: Anzahl gleichzeitiger Pings (Standard: 128)
 - `-t`/`--timeout`: Timeout pro Paket in Sekunden (Standard: 1.0)
 - `--count`: ICMP Echo Requests pro Host (Standard: 1)
+- `-p`/`--profile`: Scan-Profil verwenden (quick/normal/thorough/stealth/custom)
+- `--list-profiles`: Alle verfügbaren Profile anzeigen
+- `--save-profile`: Aktuelle Einstellungen als Profil speichern
+- `--output-csv`: Export nach CSV
+- `--output-md`: Export nach Markdown
+- `--output-html`: Export nach HTML (interaktiv)
+- `--include-down`: DOWN-Hosts in Export einschließen
+- `--no-emoji`: Emoji in Markdown-Export deaktivieren
 - `--json`: JSON-Ausgabe
 - `--no-color`: Farbige Ausgabe deaktivieren
 - `--debug`: Detaillierte Debug-Informationen ausgeben
@@ -127,6 +200,8 @@ netscan-tui
 - **`netscan.scanner`**: Ping-Logik, Ziel-Parsing, Port-Scanning
 - **`netscan.cli`**: Kommandozeilen-Interface, farbige Tabelle, JSON-Ausgabe
 - **`netscan.tui`**: Interaktive Terminal-UI mit Split-Panel-Layout
+- **`netscan.profiles`**: Scan-Profile-Verwaltung (YAML-basiert)
+- **`netscan.export`**: Export-Engine für CSV, Markdown und HTML
 - **`netscan.netinfo`**: Lokales Netzwerk/IP-Ermittlung
 - **`netscan.resolve`**: Hostname-Resolution (PTR + mDNS)
 - **`netscan.arp`**: ARP/Nachbartabelle für MAC-Adressen
@@ -139,16 +214,14 @@ netscan-tui
 - Plugin-ready für zusätzliche Scanner-Funktionen
 
 ## Zukünftige Features (Roadmap)
+- [ ] Konfigurierbare Rate-Limits (Token-Bucket-Algorithmus)
 - [ ] Erweiterte OUI-Datenbank für bessere Vendor-Erkennung
+- [ ] Service-Banner-Grabbing mit Version-Detection
+- [ ] IPv6-Unterstützung
 - [ ] Aktives mDNS-Browsing (dns-sd/avahi-browse)
 - [ ] ARP/NDP-Discovery für lokale Netze
-- [ ] Service-Banner-Grabbing
-- [ ] IPv6-Unterstützung
-- [ ] Zusätzliche Ausgabeformate (CSV, Markdown, HTML)
-- [ ] Konfigurierbare Rate-Limits
-- [ ] Scan-Profile (Quick, Normal, Thorough)
-- [ ] Export-Funktion in TUI
 - [ ] Historische Daten und Änderungsverfolgung
+- [ ] TUI Settings Panel mit allen Konfigurationen
 
 ## Lizenz
 MIT
@@ -177,7 +250,7 @@ Inspiriert von nmap, angry IP scanner und btop
 
 ---
 
-**Version**: 0.1.1  
+**Version**: 0.1.2  
 **Letztes Update**: Oktober 2025
 
 ## Siehe auch

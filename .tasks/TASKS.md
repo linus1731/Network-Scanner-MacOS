@@ -1,8 +1,8 @@
 # Network Scanner - Task Tracking
 
 > **Letztes Update**: 6. Oktober 2025  
-> **Aktueller Branch**: feature/scan-profiles  
-> **Aktuelle Version**: 0.1.1
+> **Aktueller Branch**: v0.1.1  
+> **Aktuelle Version**: 0.1.2
 
 ---
 
@@ -10,15 +10,17 @@
 
 ### Abgeschlossen ✅
 - [x] v0.1.1 - Modern TUI with Split-Panel Layout
+- [x] v0.1.2 - Export Formats & Scan Profiles
 - [x] Port-Scanning erweitert (10.000 Ports)
 - [x] Auto-Port-Scan beim Navigieren
 - [x] Unicode-Box-Design
 - [x] Release Notes und README erstellt
 - [x] Export-Formate (CSV, Markdown, HTML)
 - [x] Scan-Profile System (Quick/Normal/Thorough/Stealth)
+- [x] Persistent Port-Scan Cache (TTL: 1h)
 
 ### In Arbeit 🚧
-- [x] Task 3: Scan-Profile ✅ (gerade abgeschlossen!)
+- [ ] _Keine aktiven Tasks_
 
 ### Geplant 📋
 - Phase 1: ~~Export-Formate~~, Rate-Limits, ~~Scan-Profile~~
@@ -30,7 +32,7 @@
 ## 🎯 Phase 1: Quick Wins (Status: 2/3 Tasks = 67%)
 
 ### Task 1: Zusätzliche Ausgabeformate
-**Status**: 🚧 In Arbeit | **Priorität**: P0 | **Geschätzt**: 3-5 Tage
+**Status**: ✅ Abgeschlossen | **Priorität**: P0 | **Geschätzt**: 3-5 Tage
 
 - [x] **1.1 CSV-Export**
   - [x] 1.1.1 `netscan/export.py` mit CSVExporter-Klasse
@@ -46,7 +48,7 @@
   - [x] 1.2.4 Optional: Status-Emoji (✅/❌)
   - [x] 1.2.5 Unit-Tests schreiben
 
-- [ ] **1.3 HTML-Export**
+- [x] **1.3 HTML-Export**
   - [x] 1.3.1 HTML-Template mit CSS
   - [x] 1.3.2 CLI-Option `--output-html <datei>`
   - [x] 1.3.3 Interaktive sortierbare Tabelle (JS)

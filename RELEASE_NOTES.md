@@ -1,5 +1,255 @@
 # Release Notes - Network Scanner
 
+## Version 0.1.2 (Oktober 2025)
+
+### 🎉 Major Features
+
+#### 📊 Export-Formate für professionelle Berichte
+Drei neue Export-Formate ermöglichen professionelle Dokumentation und Weitergabe von Scan-Ergebnissen:
+
+**CSV-Export:**
+- Strukturierte Daten für Spreadsheets und Datenbanken
+- Spalten: IP, Status, Latenz, Hostname, MAC, Vendor, Ports
+- Korrektes Escaping für Kommas und Sonderzeichen
+- Port-Ranges-Formatierung (z.B. "22-25, 80, 443")
+
+**Markdown-Export:**
+- GitHub-freundliche Pipe-Tabellen
+- Optionale Status-Emojis (✅ UP / ❌ DOWN)
+- Perfekt für Dokumentation und README-Dateien
+- Escaping von Markdown-Sonderzeichen
+
+**HTML-Export:**
+- Interaktive, standalone HTML-Berichte
+- Modernes Gradient-Design (Purple/Blue)
+- Features:
+  - Sortierbare Spalten (per Klick)
+  - Echtzeit-Suchfunktion
+  - Intelligente IP-Sortierung
+  - Color-coded Status
+  - Responsive Layout
+  - Keine externen Dependencies
+
+**CLI-Integration:**
+```bash
+netscan 192.168.1.0/24 --output-csv scan.csv
+netscan 192.168.1.0/24 --output-md report.md
+netscan 192.168.1.0/24 --output-html audit.html --include-down
+```
+
+**TUI-Export-Dialog:**
+- Hotkey `e` öffnet interaktiven Export-Dialog
+- Tab-Taste zum Wechseln zwischen Formaten (CSV/Markdown/HTML)
+- Dateiname-Editor mit Cursor-Navigation
+- Option zum Einschließen von DOWN-Hosts
+- Live-Preview der Export-Statistiken
+- Erfolgs-/Fehler-Meldungen
+
+#### 🎯 Scan-Profile für optimierte Workflows
+Revolutionäres Profile-System für verschiedene Einsatzszenarien:
+
+**Vordefinierte Profile:**
+
+| Profil | Beschreibung | Settings | Dauer | Einsatz |
+|--------|--------------|----------|-------|---------|
+| **Quick** 🚀 | Schneller Scan | C=256, T=0.5s, P=top100 | <1 min | Gesundheitschecks |
+| **Normal** ⚖️ | Ausgewogen | C=128, T=1.0s, P=top1000 | 2-3 min | Standard-Scans |
+| **Thorough** 🔍 | Tiefgehend | C=64, T=2.0s, P=1-10000 | 5-10 min | Security-Audits |
+| **Stealth** 🥷 | Unaufällig | C=10, T=3.0s, P=top1000, R=50pkt/s | 10-15 min | IDS-Vermeidung |
+
+**Custom Profile Support:**
+- YAML-basierte Konfiguration in `~/.netscan/profiles/`
+- Persistente Speicherung eigener Profile
+- Konfigurierbare Parameter:
+  - Concurrency (parallele Scans)
+  - Timeout (pro Host)
+  - Port Range (top100, top1000, 1-10000)
+  - Rate Limit (optional, packets/second)
+  - Random Delays (für Stealth-Scans)
+
+**CLI-Integration:**
+```bash
+# Profile verwenden
+netscan --profile quick
+netscan --profile thorough --output-html audit.html
+
+# Profile verwalten
+netscan --list-profiles
+netscan --save-profile my-profile -c 150 -t 1.2
+```
+
+**TUI-Integration:**
+- Hotkey `Shift+P` öffnet Profile-Auswahl-Dialog
+- Visuelles Picker-Interface mit ↑/↓ Navigation
+- Preview der Profile-Details vor Auswahl
+- Aktives Profil im Header angezeigt
+- Color-coded: Predefined (grün/cyan) vs Custom (magenta)
+
+**Beispiel-Profile:**
+Vier production-ready Beispiele in `examples/custom-profiles/`:
+- `production-safe.yaml` - Konservativ für Live-Systeme
+- `home-network.yaml` - Optimiert für Heimnetzwerke
+- `pentest-deep.yaml` - Umfassend für Security-Tests
+- `iot-discovery.yaml` - Geduldig für IoT-Geräte
+
+#### 💾 Persistent Port-Scan Cache
+Intelligentes Caching-System für bessere Performance:
+
+**Features:**
+- Automatisches Caching von Port-Scan-Ergebnissen
+- Persistente Speicherung in `~/.netscan_cache.json`
+- Time-To-Live (TTL): 1 Stunde (konfigurierbar)
+- Automatisches Cleanup abgelaufener Einträge
+- Cache-Statistiken im TUI-Header
+
+**Cache-Management:**
+- `Shift+C` - Cache vollständig löschen
+- Automatische TTL-Prüfung bei jedem Zugriff
+- Cache-Alter wird bei Hover angezeigt
+- Funktioniert über TUI-Neustarts hinweg
+
+**Performance-Gewinn:**
+- Sofortige Anzeige gecachter Port-Scans
+- Reduzierung redundanter Netzwerk-Last
+- Schnelleres Navigieren zwischen bekannten Hosts
+
+#### 🔄 TUI-Verbesserungen
+Zahlreiche Verbesserungen der Terminal-UI:
+
+**Auto-Start Scan:**
+- Scan startet automatisch beim TUI-Launch
+- Keine manuelle Initiierung mehr nötig
+- Sofortige Netzwerk-Übersicht
+
+**Fortschrittsanzeigen:**
+- Anzeige des aktuell gescannten Hosts
+- Port-Scan-Fortschritt mit aktuellem Port
+- Visuelle Indikatoren während laufender Scans
+
+**Verbesserte Help-Line:**
+- Aktualisierte Tastenkombinationen
+- `[P]rofile` für Profile-Auswahl
+- `[e]xport` für Export-Dialog
+- `[C]lear cache` für Cache-Management
+
+### 🔧 Technische Verbesserungen
+
+#### Neue Module
+- **`netscan.export`** - Export-Engine für alle Formate
+- **`netscan.profiles`** - Profile-Verwaltung (YAML-basiert)
+- **`tests.test_export`** - 35 umfassende Export-Tests
+- **`tests.test_profiles`** - 22 Profile-System-Tests
+
+#### Dependencies
+- **PyYAML** hinzugefügt für YAML-Profile-Unterstützung
+- Aktualisiert in `pyproject.toml`: `dependencies = ["pyyaml>=6.0"]`
+
+#### Code-Qualität
+- **57 Unit-Tests** (35 Export + 22 Profiles) - 100% passing
+- Umfassende Test-Coverage für neue Features
+- Kein Breaking Changes zu v0.1.1
+- Backward-kompatibel (Default-Profil behält altes Verhalten)
+
+#### Profile-Architektur
+```python
+@dataclass
+class ScanProfile:
+    name: str
+    description: str
+    concurrency: int
+    timeout: float
+    port_range: str
+    rate_limit: Optional[int]
+    random_delay: bool
+    min_delay: float
+    max_delay: float
+```
+
+#### Export-Architektur
+- Einheitliches `HostData` Dataclass für alle Exporter
+- Separate Klassen: `CSVExporter`, `MarkdownExporter`, `HTMLExporter`
+- Convenience-Functions: `export_to_csv()`, `export_to_markdown()`, `export_to_html()`
+- Konsistente Filter-Logik (include_down-Parameter)
+
+### 📁 Neue Dateien
+```
+netscan/
+├── export.py              # 500+ lines, 3 Exporter-Klassen
+├── profiles.py            # 291 lines, Profile-Management
+
+tests/
+├── test_export.py         # 322 lines, 35 Tests
+├── test_profiles.py       # 322 lines, 22 Tests
+
+examples/
+└── custom-profiles/
+    ├── README.md
+    ├── production-safe.yaml
+    ├── home-network.yaml
+    ├── pentest-deep.yaml
+    └── iot-discovery.yaml
+
+.tasks/
+├── SCAN_PROFILES_FEATURE.md
+└── TASKS.md (updated)
+```
+
+### 📊 Statistiken
+- **+1,421 Zeilen Code** hinzugefügt
+- **12 Dateien** geändert/erstellt
+- **57 Tests** passing (vorher: 0)
+- **4 Beispiel-Profile** production-ready
+- **3 Export-Formate** implementiert
+- **4 Predefined Scan-Profile** konfiguriert
+
+### 🎯 Task-Fortschritt
+**Phase 1 Status: 2/3 Tasks Complete (67%)**
+- ✅ Task 1: Export-Formate (CSV, Markdown, HTML)
+- ⬜ Task 2: Rate-Limiting (pending)
+- ✅ Task 3: Scan-Profile (Quick/Normal/Thorough/Stealth)
+
+### 🚀 Use Cases
+
+**Schneller Netzwerk-Check:**
+```bash
+netscan --profile quick --output-csv quick-check.csv
+```
+
+**Security-Audit:**
+```bash
+netscan --profile thorough --output-html security-audit-$(date +%Y%m%d).html
+```
+
+**Stealth-Scan:**
+```bash
+netscan --profile stealth --output-md stealth-report.md
+```
+
+**Custom Workflow:**
+```bash
+netscan --save-profile my-workflow -c 150 -t 1.2
+netscan --profile my-workflow --output-html daily-scan.html
+```
+
+### 📝 Dokumentation
+- README aktualisiert mit allen neuen Features
+- Beispiel-Profile mit detaillierten Kommentaren
+- Umfassende Feature-Dokumentation in `.tasks/`
+- CLI-Help-Text erweitert
+
+### 🐛 Bug Fixes
+- Korrekte Handhabung von Sonderzeichen in CSV
+- XSS-Prevention in HTML-Export
+- Proper IP-Sortierung in interaktiven Reports
+- Cache-TTL-Validierung bei jedem Zugriff
+
+### ⚡ Performance
+- Port-Scan-Cache reduziert redundante Scans um bis zu 100%
+- Profile ermöglichen optimierte Settings für verschiedene Szenarien
+- Batch-Export vermeidet unnötige Netzwerk-Calls
+
+---
+
 ## Version 0.1.1 (Oktober 2025)
 
 ### 🎉 Major Features
