@@ -50,6 +50,21 @@ netscan --profile stealth --rate-limit 2       # Ultra-stealth
 - Token bucket algorithm validiert (refill, burst, thread-safety)
 - Integrationstest mit echten Netzwerk-Operationen
 
+### 🎨 TUI Integration (Bonus!)
+**Live Rate Limit Control** direkt in der TUI:
+- **Hotkeys**: `+` erhöhen, `-` verringern
+- **Header-Anzeige**: Zeigt aktuelle Rate und Status
+- **Visual Indicators**:
+  - `rate=10/s ✓` - Keine Drosselung
+  - `rate=5/s ⚡` - Leichte Drosselung (<10%)
+  - `rate=2/s 🔥` - Starke Drosselung (>10%)
+  - `rate=∞` - Unbegrenzt (deaktiviert)
+- **Smart Adjustment**: 
+  - 1-10 req/s: ±1 pro Schritt
+  - 10-50 req/s: ±5 pro Schritt
+  - 50+ req/s: ±10 pro Schritt
+- **Feedback**: Toast-Nachricht zeigt neue Rate
+
 ### 🚀 Phase 1 Complete!
 Mit Rate Limiting ist **Phase 1** (Basic Network Discovery) nun **100% abgeschlossen**:
 - ✅ Task 1: Export Formats (CSV, Markdown, HTML)

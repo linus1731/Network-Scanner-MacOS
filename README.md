@@ -129,8 +129,9 @@ netscan --profile stealth --rate-limit 2   # Sehr langsam für maximale Unauffä
 - **Token Bucket Algorithm**: Glatte Rate-Limitierung mit Burst-Unterstützung
 - **Thread-Safe**: Funktioniert mit hoher Concurrency
 - **Statistiken**: Tracking von total/throttled requests
-- **Dynamische Anpassung**: Rate kann zur Laufzeit geändert werden (CLI)
+- **Dynamische Anpassung**: Rate kann zur Laufzeit geändert werden (CLI + TUI!)
 - **Zero = Unlimited**: `--rate-limit 0` deaktiviert die Limitierung
+- **TUI Live Control**: +/- Tasten für sofortige Anpassung während des Scans
 
 **Empfohlene Werte:**
 - **Produktions-Netze**: `--rate-limit 10-20` (sicher für kritische Infrastruktur)
@@ -149,6 +150,7 @@ netscan-tui
 | `s` | Netzwerk-Scan starten |
 | `r` | Interface/Netz neu erkennen |
 | `a` | Filter umschalten (ALL ↔ UP) |
+| `+` / `-` | Rate Limit erhöhen/verringern (live Anpassung!) |
 | `Shift+P` | Scan-Profil auswählen (Quick/Normal/Thorough/Stealth) |
 | `e` | Export-Dialog öffnen (CSV/Markdown/HTML) |
 | `Shift+C` | Port-Scan-Cache löschen |
@@ -161,6 +163,11 @@ netscan-tui
 
 #### TUI-Features im Detail
 - **Live-Traffic-Graphen**: Geglättete Sparklines für RX (magenta) und TX (blau) mit aktuellem Wert und dynamischem Maximum
+- **Rate Limit Control**: Live-Anpassung mit +/- Tasten, visuelle Indikatoren:
+  - `rate=10/s ✓` - Aktiv, keine Drosselung
+  - `rate=5/s ⚡` - Aktiv, leichte Drosselung (<10%)
+  - `rate=2/s 🔥` - Aktiv, starke Drosselung (>10%)
+  - `rate=∞` - Deaktiviert (unbegrenzt)
 - **Auto-Port-Scan**: Beim Navigieren zwischen Hosts werden automatisch die Ports gescannt
 - **Persistent Cache**: Port-Scan-Ergebnisse werden für 1 Stunde gespeichert (~/.netscan_cache.json)
 - **Scan-Profile**: Schnellwahl optimierter Einstellungen für verschiedene Szenarien

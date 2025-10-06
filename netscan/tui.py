@@ -16,6 +16,7 @@ from .scanner import scan_cidr, port_scan, expand_targets
 from .resolve import resolve_ptrs
 from .arp import get_arp_table
 from .export import export_to_csv, export_to_markdown, export_to_html
+from .ratelimit import get_global_limiter
 from .profiles import (
     get_profile,
     list_profiles,
@@ -71,6 +72,10 @@ class TuiApp:
         self.scan_current_host: Optional[str] = None  # Currently scanning host
         # scan profile
         self.active_profile: ScanProfile = PREDEFINED_PROFILES['normal']  # Default to normal profile
+        
+        # rate limiting
+        self.rate_limiter = get_global_limiter()
+        self.rate_limit_enabled = False  # Start with no limit
         
         # Load persistent cache
         self._load_cache()
@@ -641,11 +646,23 @@ class TuiApp:
                     i += 1
                 return f"{bps:6.1f} {units[i]}"
 
-            title = f"netscan-tui  iface={self.iface}  net={self.cidr}  profile={self.active_profile.name}  rx={fmt(rx)}  tx={fmt(tx)}  filter={'UP' if self.only_up else 'ALL'}  sort={self.sort_by}{'↓' if self.sort_desc else '↑'}  cache={len(self.portscan_cache)}"
+            # Get rate limit info
+            rate_info = ""
+            if self.rate_limit_enabled:
+                stats = self.rate_limiter.get_stats()
+                rate = stats.get('rate', 0)
+                if rate and rate > 0:
+                    throttle_pct = stats.get('throttle_percentage', 0)
+                    throttle_indicator = "🔥" if throttle_pct > 10 else "⚡" if throttle_pct > 0 else "✓"
+                    rate_info = f"  rate={rate}/s {throttle_indicator}"
+                else:
+                    rate_info = "  rate=∞"
+            
+            title = f"netscan-tui  iface={self.iface}  net={self.cidr}  profile={self.active_profile.name}{rate_info}  rx={fmt(rx)}  tx={fmt(tx)}  filter={'UP' if self.only_up else 'ALL'}  sort={self.sort_by}{'↓' if self.sort_desc else '↑'}  cache={len(self.portscan_cache)}"
             stdscr.addstr(0, 0, title[: max(0, w - 1)], curses.A_BOLD | cpair(4))
 
             # Help line
-            help_line = "[s]can  [r]efresh  [P]rofile  [a]ctive-only  [e]xport  [C]lear cache  [1-5] sort  [o]cycle  [O]asc/desc  [p]orts  ↑/↓ select  [q]uit"
+            help_line = "[s]can  [r]efresh  [P]rofile  [+/-] rate  [a]ctive-only  [e]xport  [C]lear cache  [1-5] sort  [o]cycle  [O]asc/desc  [p]orts  ↑/↓ select  [q]uit"
             stdscr.addstr(1, 0, help_line[: max(0, w - 1)], curses.A_DIM | cpair(4))
 
             # Graph lines: RX and TX sparklines
@@ -1031,6 +1048,59 @@ class TuiApp:
             elif ch == ord('a'):
                 self.only_up = not self.only_up
                 self.sel = 0
+            elif ch == ord('+') or ch == ord('='):
+                # Increase rate limit
+                stats = self.rate_limiter.get_stats()
+                current_rate = stats.get('rate', 0)
+                
+                if not self.rate_limit_enabled or current_rate == 0:
+                    # Start with 10 req/s
+                    new_rate = 10
+                    self.rate_limit_enabled = True
+                elif current_rate < 10:
+                    new_rate = current_rate + 1
+                elif current_rate < 50:
+                    new_rate = current_rate + 5
+                else:
+                    new_rate = current_rate + 10
+                
+                self.rate_limiter.set_rate(new_rate, int(new_rate * 2))
+                self.export_message = f"Rate limit: {new_rate} req/s"
+                self.export_message_color = 1
+                self.export_message_time = time.time()
+            elif ch == ord('-') or ch == ord('_'):
+                # Decrease rate limit
+                stats = self.rate_limiter.get_stats()
+                current_rate = stats.get('rate', 0)
+                
+                if not self.rate_limit_enabled or current_rate == 0:
+                    # Do nothing
+                    pass
+                elif current_rate <= 2:
+                    # Disable rate limiting
+                    self.rate_limit_enabled = False
+                    self.rate_limiter.set_rate(0, 1)
+                    self.export_message = "Rate limit: disabled"
+                    self.export_message_color = 1
+                    self.export_message_time = time.time()
+                elif current_rate <= 10:
+                    new_rate = current_rate - 1
+                    self.rate_limiter.set_rate(new_rate, int(new_rate * 2))
+                    self.export_message = f"Rate limit: {new_rate} req/s"
+                    self.export_message_color = 1
+                    self.export_message_time = time.time()
+                elif current_rate <= 50:
+                    new_rate = current_rate - 5
+                    self.rate_limiter.set_rate(new_rate, int(new_rate * 2))
+                    self.export_message = f"Rate limit: {new_rate} req/s"
+                    self.export_message_color = 1
+                    self.export_message_time = time.time()
+                else:
+                    new_rate = current_rate - 10
+                    self.rate_limiter.set_rate(new_rate, int(new_rate * 2))
+                    self.export_message = f"Rate limit: {new_rate} req/s"
+                    self.export_message_color = 1
+                    self.export_message_time = time.time()
             elif ch == ord('o'):
                 # cycle sort column
                 order = ["ip", "status", "latency", "hostname", "mac"]
