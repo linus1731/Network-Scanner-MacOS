@@ -2,7 +2,7 @@
 
 Ein moderner, stabiler und erweiterbarer Netzwerkscanner für macOS und Linux mit interaktiver Terminal-UI. Führt parallele Ping-Sweeps aus und bietet detaillierte Host-Informationen inklusive Port-Scanning.
 
-![Version](https://img.shields.io/badge/version-0.1.2-blue)
+![Version](https://img.shields.io/badge/version-0.1.3-blue)
 ![Python](https://img.shields.io/badge/python-3.9+-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
@@ -10,6 +10,7 @@ Ein moderner, stabiler und erweiterbarer Netzwerkscanner für macOS und Linux mi
 
 ### Kern-Funktionen
 - **Parallele Netzwerk-Scans** mit konfigurierbarer Concurrency
+- **Rate Limiting**: Token-Bucket-Algorithmus für sichere Scans in Produktions-Umgebungen
 - **Scan-Profile**: Vordefinierte Profile (Quick/Normal/Thorough/Stealth) für verschiedene Einsatzzwecke
 - **Export-Formate**: CSV, Markdown und HTML für professionelle Berichte
 - **Flexible Zielangabe**: CIDR, IP-Bereiche (z.B. `192.168.1.10-50`) und einzelne IPs
@@ -103,7 +104,39 @@ netscan 192.168.1.0/24 --no-color
 
 # Debug-Modus
 netscan --debug
+
+# Rate Limiting (Bandbreite begrenzen)
+netscan 192.168.1.0/24 --rate-limit 10        # Max 10 req/s
+netscan --rate-limit 5 --burst 20              # Max 5 req/s mit Burst von 20
 ```
+
+### Rate Limiting
+
+Das Rate Limiting schützt vor Netzwerk-Überlastung und verhindert das Auslösen von IDS/IPS-Systemen:
+
+```bash
+# Grundlegende Rate-Limitierung
+netscan 192.168.1.0/24 --rate-limit 10    # Maximal 10 Anfragen pro Sekunde
+
+# Mit Burst-Capacity
+netscan --rate-limit 5 --burst 20          # 5 req/s mit Burst von 20
+
+# Für Stealth-Scans
+netscan --profile stealth --rate-limit 2   # Sehr langsam für maximale Unauffälligkeit
+```
+
+**Features:**
+- **Token Bucket Algorithm**: Glatte Rate-Limitierung mit Burst-Unterstützung
+- **Thread-Safe**: Funktioniert mit hoher Concurrency
+- **Statistiken**: Tracking von total/throttled requests
+- **Dynamische Anpassung**: Rate kann zur Laufzeit geändert werden (CLI)
+- **Zero = Unlimited**: `--rate-limit 0` deaktiviert die Limitierung
+
+**Empfohlene Werte:**
+- **Produktions-Netze**: `--rate-limit 10-20` (sicher für kritische Infrastruktur)
+- **Stealth-Scans**: `--rate-limit 2-5` (IDS-Vermeidung)
+- **Heim-Netzwerk**: Keine Limitierung oder `--rate-limit 50+` (maximale Geschwindigkeit)
+- **IoT-Geräte**: `--rate-limit 5-10` (viele IoT-Geräte haben langsame Stacks)
 
 ### TUI-Modus (Interaktiv)
 ```bash

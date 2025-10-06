@@ -1,5 +1,65 @@
 # Release Notes - Network Scanner
 
+## Version 0.1.3 (Oktober 2025) 🚦
+
+### 🎉 Major Feature: Rate Limiting
+
+#### ⏱️ Token Bucket Rate Limiter
+Professionelles Rate Limiting für sichere Scans in Produktions-Umgebungen:
+
+**Kern-Features:**
+- **Token Bucket Algorithm**: Glatte Limitierung mit Burst-Unterstützung
+- **Thread-Safe**: Funktioniert nahtlos mit hoher Concurrency
+- **Statistiken**: Tracking von total/throttled requests
+- **Dynamische Anpassung**: Rate kann zur Laufzeit geändert werden
+- **Zero = Unlimited**: `--rate-limit 0` deaktiviert die Limitierung
+
+**CLI-Integration:**
+```bash
+# Grundlegende Rate-Limitierung
+netscan 192.168.1.0/24 --rate-limit 10        # Max 10 req/s
+
+# Mit Burst-Capacity
+netscan --rate-limit 5 --burst 20              # 5 req/s, Burst von 20
+
+# Kombiniert mit Profilen
+netscan --profile stealth --rate-limit 2       # Ultra-stealth
+```
+
+**Implementierung:**
+- Neue `netscan/ratelimit.py` mit RateLimiter-Klasse (196 Zeilen)
+- Integration in `scanner.py`: ping(), _tcp_probe(), _tcp_connect()
+- CLI-Optionen: `--rate-limit N` und `--burst N`
+- 13 neue Unit-Tests (alle bestanden)
+
+**Use Cases:**
+- **Produktions-Netze**: 10-20 req/s (sicher für kritische Infrastruktur)
+- **Stealth-Scans**: 2-5 req/s (IDS-Vermeidung)
+- **Heim-Netzwerk**: Keine Limitierung (maximale Geschwindigkeit)
+- **IoT-Geräte**: 5-10 req/s (langsame TCP-Stacks)
+
+**Statistiken:**
+- Tokens: Aktuelle verfügbare Tokens
+- Total Requests: Gesamtzahl aller Anfragen
+- Throttled Requests: Anzahl verzögerter Anfragen
+- Throttle Percentage: Prozentsatz verzögerter Anfragen
+
+### 📊 Testing & Qualität
+- **70 Unit-Tests** (35 export + 22 profiles + 13 ratelimit)
+- **100% Pass Rate**
+- Token bucket algorithm validiert (refill, burst, thread-safety)
+- Integrationstest mit echten Netzwerk-Operationen
+
+### 🚀 Phase 1 Complete!
+Mit Rate Limiting ist **Phase 1** (Basic Network Discovery) nun **100% abgeschlossen**:
+- ✅ Task 1: Export Formats (CSV, Markdown, HTML)
+- ✅ Task 2: Rate Limiting (Token Bucket)
+- ✅ Task 3: Scan Profiles (Quick/Normal/Thorough/Stealth)
+
+**Nächste Schritte:** Phase 2 (Deep Intelligence) mit Banner Grabbing & Service Detection
+
+---
+
 ## Version 0.1.2 (Oktober 2025)
 
 ### 🎉 Major Features
