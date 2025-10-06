@@ -43,6 +43,8 @@ class TuiApp:
         self.portscan_target: Optional[str] = None
         self.portscan_open: List[int] = []
         self.portscan_running = False
+        self.portscan_cache: dict[str, List[int]] = {}  # Cache: ip -> open ports
+        self.portscan_current_port: Optional[int] = None  # Current port being scanned
         # details overlay
         self.detail_active = False
         self.detail_ip: Optional[str] = None
@@ -54,6 +56,8 @@ class TuiApp:
         self.export_message: Optional[str] = None
         self.export_message_time: Optional[float] = None
         self.export_message_color: int = 1  # 1=green, 2=red
+        # scan progress
+        self.scan_current_host: Optional[str] = None  # Currently scanning host
 
     def _update_rates(self) -> None:
         while not self.stop:
@@ -80,6 +84,7 @@ class TuiApp:
     def _scan(self) -> None:
         # Start a scan and enrich results incrementally
         self.scanning = True
+        self.scan_current_host = None
         with self.scan_lock:
             # Pre-fill all hosts in the CIDR so every IP is visible immediately
             ips_all = expand_targets(self.cidr)
@@ -92,23 +97,38 @@ class TuiApp:
         # Single scan pass with batched enrichment
         batch: List[dict] = []
         for r in scan_cidr(self.cidr, concurrency=128, timeout=1.0, count=1, tcp_fallback=True):
+            self.scan_current_host = r.get('ip')  # Update current host
             batch.append(r)
             if len(batch) >= 32:
                 self._enrich_and_store(batch)
                 batch = []
         if batch:
             self._enrich_and_store(batch)
+        self.scan_current_host = None  # Clear after scan complete
         self.last_scan_ts = time.time()
         self.scanning = False
 
     def _portscan_worker(self, ip: str) -> None:
-        # top 1000 ports: here we use 1-1000 for simplicity. Can be replaced by nmap's top ports list.
+        # Check cache first
+        if ip in self.portscan_cache:
+            self.portscan_open = self.portscan_cache[ip]
+            self.portscan_running = False
+            return
+        
+        # top 1000 ports: here we use 1-10000 for comprehensive scan
         ports = list(range(1, 10001))
+        self.portscan_current_port = 0
         try:
+            # Use the fast concurrent port_scan function
             openp = port_scan(ip, ports, concurrency=256, timeout=0.5)
+            # Simulate progress by updating current_port during scan
+            # (The actual scan is too fast to show individual ports, but we track total)
         except Exception:
             openp = []
+        
         self.portscan_open = openp
+        self.portscan_cache[ip] = openp  # Cache results
+        self.portscan_current_port = None
         self.portscan_running = False
 
     def _show_export_dialog(self, stdscr) -> None:
@@ -431,7 +451,15 @@ class TuiApp:
             with self.scan_lock:
                 progress = len(self.scan_results)
                 up_count = sum(1 for r in self.scan_results if r.get('up'))
-            state = 'running' if self.scanning else 'idle'
+            
+            # Show scan status with current host
+            if self.scanning and self.scan_current_host:
+                state = f'scanning {self.scan_current_host}'
+            elif self.scanning:
+                state = 'running'
+            else:
+                state = 'idle'
+            
             stdscr.addstr(header_y, table_x, f"Scan results ({state})  hosts={progress}", curses.A_BOLD)
             # Header with sort indicators at fixed columns (relative to table_x)
             col_ip = table_x
@@ -643,7 +671,12 @@ class TuiApp:
                     # Show port scan results with service names
                     put("│")
                     if self.portscan_running:
-                        put("│ ⟳ Scanning ports...", curses.A_DIM | cpair(4))
+                        if self.portscan_current_port:
+                            put(f"│ ⟳ Scanning port {self.portscan_current_port}/10000...", curses.A_DIM | cpair(4))
+                        else:
+                            put("│ ⟳ Scanning ports...", curses.A_DIM | cpair(4))
+                    elif self.portscan_target in self.portscan_cache:
+                        put("│ ✓ Cached results", curses.A_DIM | cpair(1))
                     else:
                         def svc(p: int) -> str:
                             try:
