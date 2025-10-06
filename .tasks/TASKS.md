@@ -37,12 +37,12 @@
   - [x] 1.1.4 Escaping für Kommas und Anführungszeichen
   - [x] 1.1.5 Unit-Tests schreiben
 
-- [ ] **1.2 Markdown-Export**
-  - [ ] 1.2.1 MarkdownExporter-Klasse
-  - [ ] 1.2.2 CLI-Option `--output-md <datei>`
-  - [ ] 1.2.3 Pipe-Tabellen mit Header
-  - [ ] 1.2.4 Optional: Status-Emoji (✅/❌)
-  - [ ] 1.2.5 Unit-Tests schreiben
+- [x] **1.2 Markdown-Export**
+  - [x] 1.2.1 MarkdownExporter-Klasse
+  - [x] 1.2.2 CLI-Option `--output-md <datei>`
+  - [x] 1.2.3 Pipe-Tabellen mit Header
+  - [x] 1.2.4 Optional: Status-Emoji (✅/❌)
+  - [x] 1.2.5 Unit-Tests schreiben
 
 - [ ] **1.3 HTML-Export**
   - [ ] 1.3.1 HTML-Template mit CSS
