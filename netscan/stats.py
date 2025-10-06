@@ -231,7 +231,7 @@ class DeviceCategorizer:
                 return device_type
         
         # Check by hostname patterns
-        hostname = host.get('hostname', '').lower()
+        hostname = (host.get('hostname') or '').lower()
         if any(word in hostname for word in ['iphone', 'android', 'phone', 'mobile']):
             return 'phone'
         if any(word in hostname for word in ['laptop', 'desktop', 'pc', 'macbook', 'imac']):

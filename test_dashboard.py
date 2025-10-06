@@ -34,9 +34,9 @@ for event in events:
 
 # Test network stats
 test_hosts = [
-    {'ip': '192.168.1.1', 'up': True, 'latency_ms': 5.0, 'mac': 'aa:bb:cc:dd:ee:ff'},
-    {'ip': '192.168.1.2', 'up': True, 'latency_ms': 10.0, 'mac': '11:22:33:44:55:66'},
-    {'ip': '192.168.1.3', 'up': False, 'latency_ms': None, 'mac': None},
+    {'ip': '192.168.1.1', 'up': True, 'latency_ms': 5.0, 'mac': 'aa:bb:cc:dd:ee:ff', 'hostname': 'router.local'},
+    {'ip': '192.168.1.2', 'up': True, 'latency_ms': 10.0, 'mac': '11:22:33:44:55:66', 'hostname': None},  # Test None hostname
+    {'ip': '192.168.1.3', 'up': False, 'latency_ms': None, 'mac': None, 'hostname': ''},  # Test empty hostname
 ]
 
 health = NetworkStats.calculate_health_score(test_hosts)
@@ -49,5 +49,6 @@ print(f"\n✅ Network health: {health:.1f}/100")
 print(f"   UP: {up_count}/{len(test_hosts)}")
 print(f"   Avg latency: {avg_latency:.2f}ms")
 print(f"   Device types: {devices}")
+print(f"   ✅ Handles None hostname correctly")
 
 print("\n🎉 All dashboard components working!")
