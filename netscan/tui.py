@@ -15,7 +15,7 @@ from .traffic import get_bytes_counters
 from .scanner import scan_cidr, port_scan, expand_targets
 from .resolve import resolve_ptrs
 from .arp import get_arp_table
-from .export import export_to_csv
+from .export import export_to_csv, export_to_markdown, export_to_html
 
 
 class TuiApp:
@@ -197,12 +197,12 @@ class TuiApp:
         self.portscan_running = False
 
     def _show_export_dialog(self, stdscr) -> None:
-        """Show export dialog and handle CSV export."""
+        """Show export dialog and handle exports in multiple formats."""
         h, w = stdscr.getmaxyx()
         
         # Dialog dimensions
-        dialog_h = 15
-        dialog_w = min(70, w - 10)
+        dialog_h = 18
+        dialog_w = min(75, w - 10)
         start_y = (h - dialog_h) // 2
         start_x = (w - dialog_w) // 2
         
@@ -218,16 +218,25 @@ class TuiApp:
         dialog.box()
         
         # Dialog state
+        formats = ["CSV", "Markdown", "HTML"]
+        selected_format = 0
         include_down = False
         filename = f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        cursor_pos = len(filename)
+        cursor_pos = len(filename) - 4  # Position before extension
+        
+        def update_extension():
+            nonlocal filename, cursor_pos
+            base = filename.rsplit('.', 1)[0]
+            ext = {0: 'csv', 1: 'md', 2: 'html'}[selected_format]
+            filename = f"{base}.{ext}"
+            cursor_pos = min(cursor_pos, len(filename) - len(ext) - 1)
         
         def refresh_dialog():
             dialog.erase()
             dialog.box()
             
             # Title
-            title = " Export to CSV "
+            title = " Export Scan Results "
             try:
                 dialog.addstr(0, (dialog_w - len(title)) // 2, title, curses.A_BOLD | curses.color_pair(4))
             except curses.error:
@@ -235,17 +244,24 @@ class TuiApp:
             
             # Instructions
             try:
-                dialog.addstr(2, 2, "Filename:", curses.A_BOLD)
-                dialog.addstr(3, 2, f" {filename}", curses.A_NORMAL)
+                dialog.addstr(2, 2, "Format:", curses.A_BOLD)
+                # Show format options
+                for i, fmt in enumerate(formats):
+                    marker = "●" if i == selected_format else "○"
+                    attr = curses.A_BOLD | curses.color_pair(4) if i == selected_format else curses.A_NORMAL
+                    dialog.addstr(3, 4 + i * 15, f"{marker} {fmt}", attr)
+                
+                dialog.addstr(5, 2, "Filename:", curses.A_BOLD)
+                dialog.addstr(6, 2, f" {filename}", curses.A_NORMAL)
                 # Show cursor
                 try:
-                    dialog.addstr(3, 3 + cursor_pos, "", curses.A_REVERSE)
+                    dialog.addstr(6, 3 + cursor_pos, "", curses.A_REVERSE)
                 except curses.error:
                     pass
                 
-                dialog.addstr(5, 2, "Options:", curses.A_BOLD)
+                dialog.addstr(8, 2, "Options:", curses.A_BOLD)
                 check = "[X]" if include_down else "[ ]"
-                dialog.addstr(6, 2, f" {check} Include DOWN hosts")
+                dialog.addstr(9, 2, f" {check} Include DOWN hosts")
                 
                 # Stats
                 with self.scan_lock:
@@ -253,15 +269,16 @@ class TuiApp:
                     up_count = sum(1 for r in self.scan_results if r.get('up'))
                     down_count = total - up_count
                 
-                dialog.addstr(8, 2, "Preview:", curses.A_BOLD)
+                dialog.addstr(11, 2, "Preview:", curses.A_BOLD)
                 if include_down:
-                    dialog.addstr(9, 2, f" → Exporting {total} hosts ({up_count} UP, {down_count} DOWN)")
+                    dialog.addstr(12, 2, f" → Exporting {total} hosts ({up_count} UP, {down_count} DOWN)")
                 else:
-                    dialog.addstr(9, 2, f" → Exporting {up_count} hosts (UP only)")
+                    dialog.addstr(12, 2, f" → Exporting {up_count} hosts (UP only)")
                 
                 # Controls
-                dialog.addstr(11, 2, "Controls:", curses.A_DIM)
-                dialog.addstr(12, 2, " [Enter] Export  [Space] Toggle option  [Esc] Cancel", curses.A_DIM)
+                dialog.addstr(14, 2, "Controls:", curses.A_DIM)
+                dialog.addstr(15, 2, " [Tab] Switch format  [Enter] Export  [Space] Options", curses.A_DIM)
+                dialog.addstr(16, 2, " [Esc] Cancel", curses.A_DIM)
                 
             except curses.error:
                 pass
@@ -302,8 +319,16 @@ class TuiApp:
                             'ports': self.portscan_open if r.get('ip') == self.portscan_target else []
                         })
                     
-                    output_path = export_to_csv(hosts_dict, filename, include_down=include_down)
-                    self.export_message = f"✅ Exported to: {output_path}"
+                    # Export based on selected format
+                    if selected_format == 0:  # CSV
+                        output_path = export_to_csv(hosts_dict, filename, include_down=include_down)
+                    elif selected_format == 1:  # Markdown
+                        output_path = export_to_markdown(hosts_dict, filename, include_down=include_down, use_emoji=True)
+                    else:  # HTML
+                        output_path = export_to_html(hosts_dict, filename, include_down=include_down)
+                    
+                    format_name = formats[selected_format]
+                    self.export_message = f"✅ {format_name} exported to: {output_path}"
                     self.export_message_color = 1
                     
                 except Exception as e:
@@ -312,6 +337,10 @@ class TuiApp:
                 
                 self.export_message_time = time.time()
                 break
+            
+            elif ch == 9:  # Tab - Switch format
+                selected_format = (selected_format + 1) % len(formats)
+                update_extension()
                 
             elif ch == ord(' '):  # Space - Toggle include_down
                 include_down = not include_down

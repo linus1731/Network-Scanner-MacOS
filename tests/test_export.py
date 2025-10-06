@@ -7,7 +7,7 @@ import tempfile
 import csv
 from pathlib import Path
 
-from netscan.export import CSVExporter, MarkdownExporter, HostData, export_to_csv, export_to_markdown
+from netscan.export import CSVExporter, MarkdownExporter, HTMLExporter, HostData, export_to_csv, export_to_markdown, export_to_html
 
 
 class TestHostData(unittest.TestCase):
@@ -405,6 +405,176 @@ class TestMarkdownExporter(unittest.TestCase):
             content = f.read()
             self.assertIn('192.168.1.1', content)
             self.assertIn('test.local', content)
+
+
+class TestHTMLExporter(unittest.TestCase):
+    """Test HTML export functionality."""
+    
+    def setUp(self):
+        """Create temporary directory for test files."""
+        self.temp_dir = tempfile.mkdtemp()
+    
+    def test_export_empty(self):
+        """Test export with no hosts."""
+        output = Path(self.temp_dir) / "empty.html"
+        exporter = HTMLExporter(str(output))
+        exporter.export([])
+        
+        self.assertTrue(output.exists())
+        with open(output, 'r') as f:
+            content = f.read()
+            self.assertIn("<!DOCTYPE html>", content)
+            self.assertIn("Network Scan Results", content)
+            self.assertIn("<span id=\"resultCount\">0</span> hosts displayed", content)
+    
+    def test_export_with_hosts(self):
+        """Test export with hosts."""
+        output = Path(self.temp_dir) / "hosts.html"
+        exporter = HTMLExporter(str(output))
+        
+        hosts = [
+            HostData(ip="192.168.1.1", status="UP", latency=1.23),
+            HostData(ip="192.168.1.2", status="DOWN")
+        ]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            content = f.read()
+            self.assertIn("192.168.1.1", content)
+            self.assertIn("✅ UP", content)
+            self.assertIn("1.23 ms", content)
+    
+    def test_html_structure(self):
+        """Test that HTML structure is valid."""
+        output = Path(self.temp_dir) / "structure.html"
+        exporter = HTMLExporter(str(output))
+        
+        hosts = [HostData(ip="192.168.1.1", status="UP")]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            content = f.read()
+            # Check for essential HTML elements
+            self.assertIn("<html", content)
+            self.assertIn("</html>", content)
+            self.assertIn("<head>", content)
+            self.assertIn("</head>", content)
+            self.assertIn("<body>", content)
+            self.assertIn("</body>", content)
+            self.assertIn("<table", content)
+            self.assertIn("</table>", content)
+            self.assertIn("<script>", content)
+            self.assertIn("</script>", content)
+            self.assertIn("<style>", content)
+            self.assertIn("</style>", content)
+    
+    def test_filter_down_hosts(self):
+        """Test that DOWN hosts are filtered by default."""
+        output = Path(self.temp_dir) / "filtered.html"
+        exporter = HTMLExporter(str(output), include_down=False)
+        
+        hosts = [
+            HostData(ip="192.168.1.1", status="UP", latency=1.0),
+            HostData(ip="192.168.1.2", status="DOWN"),
+            HostData(ip="192.168.1.3", status="UP", latency=2.0),
+        ]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            content = f.read()
+            self.assertIn("192.168.1.1", content)
+            self.assertNotIn("192.168.1.2", content)
+            self.assertIn("192.168.1.3", content)
+            self.assertIn("<span id=\"resultCount\">2</span> hosts displayed", content)
+    
+    def test_include_down_hosts(self):
+        """Test including DOWN hosts."""
+        output = Path(self.temp_dir) / "with_down.html"
+        exporter = HTMLExporter(str(output), include_down=True)
+        
+        hosts = [
+            HostData(ip="192.168.1.1", status="UP", latency=1.0),
+            HostData(ip="192.168.1.2", status="DOWN"),
+        ]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            content = f.read()
+            self.assertIn("192.168.1.1", content)
+            self.assertIn("192.168.1.2", content)
+            self.assertIn("✅ UP", content)
+            self.assertIn("❌ DOWN", content)
+    
+    def test_port_formatting(self):
+        """Test port formatting in HTML."""
+        output = Path(self.temp_dir) / "ports.html"
+        exporter = HTMLExporter(str(output))
+        
+        hosts = [
+            HostData(ip="192.168.1.1", status="UP", ports=[22, 80, 443])
+        ]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            content = f.read()
+            self.assertIn("22, 80, 443", content)
+    
+    def test_port_ranges(self):
+        """Test port range formatting."""
+        output = Path(self.temp_dir) / "port_ranges.html"
+        exporter = HTMLExporter(str(output))
+        
+        hosts = [
+            HostData(ip="192.168.1.1", status="UP", ports=[22, 23, 24, 25, 80, 443])
+        ]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            content = f.read()
+            self.assertIn("22-25", content)
+            self.assertIn("80", content)
+            self.assertIn("443", content)
+    
+    def test_html_escaping(self):
+        """Test HTML special character escaping."""
+        output = Path(self.temp_dir) / "escape.html"
+        exporter = HTMLExporter(str(output))
+        
+        hosts = [
+            HostData(ip="192.168.1.1", status="UP", vendor="Company <script>alert('xss')</script>")
+        ]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            content = f.read()
+            # Should be escaped
+            self.assertIn("&lt;script&gt;", content)
+            self.assertNotIn("<script>alert", content)
+    
+    def test_convenience_function(self):
+        """Test export_to_html convenience function."""
+        output = Path(self.temp_dir) / "convenience.html"
+        
+        hosts_dict = [
+            {
+                'ip': '192.168.1.1',
+                'status': 'UP',
+                'latency': 1.5,
+                'hostname': 'test.local',
+                'mac': 'AA:BB:CC:DD:EE:FF',
+                'vendor': 'Test',
+                'ports': [22, 80]
+            }
+        ]
+        
+        result_path = export_to_html(hosts_dict, str(output))
+        
+        self.assertTrue(Path(result_path).exists())
+        with open(result_path, 'r') as f:
+            content = f.read()
+            self.assertIn('192.168.1.1', content)
+            self.assertIn('test.local', content)
+            self.assertIn('<!DOCTYPE html>', content)
 
 
 if __name__ == '__main__':

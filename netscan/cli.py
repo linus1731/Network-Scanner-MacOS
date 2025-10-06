@@ -11,7 +11,7 @@ from .netinfo import get_local_network_cidr, get_primary_ipv4
 from .colors import supports_color, paint, Color
 from .resolve import resolve_ptrs
 from .arp import get_arp_table
-from .export import export_to_csv, export_to_markdown
+from .export import export_to_csv, export_to_markdown, export_to_html
 
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
@@ -60,6 +60,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         type=str,
         metavar="FILE",
         help="Export results to Markdown file",
+    )
+    parser.add_argument(
+        "--output-html",
+        type=str,
+        metavar="FILE",
+        help="Export results to HTML file (interactive report)",
     )
     parser.add_argument(
         "--include-down",
@@ -134,6 +140,16 @@ def main(argv: List[str] | None = None) -> int:
             print(paint(f"✅ Markdown exported to: {output_path}", Color.GREEN, Color.BOLD, enable=color_on))
         except Exception as e:
             print(paint(f"❌ Markdown export failed: {e}", Color.RED, Color.BOLD, enable=color_on), file=sys.stderr)
+            return 1
+    
+    # Export to HTML if requested
+    if ns.output_html:
+        try:
+            output_path = export_to_html(results, ns.output_html, include_down=ns.include_down)
+            color_on = supports_color() and not ns.no_color
+            print(paint(f"✅ HTML exported to: {output_path}", Color.GREEN, Color.BOLD, enable=color_on))
+        except Exception as e:
+            print(paint(f"❌ HTML export failed: {e}", Color.RED, Color.BOLD, enable=color_on), file=sys.stderr)
             return 1
 
     if ns.json:
