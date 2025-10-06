@@ -11,7 +11,7 @@ from .netinfo import get_local_network_cidr, get_primary_ipv4
 from .colors import supports_color, paint, Color
 from .resolve import resolve_ptrs
 from .arp import get_arp_table
-from .export import export_to_csv
+from .export import export_to_csv, export_to_markdown
 
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
@@ -56,9 +56,20 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Export results to CSV file",
     )
     parser.add_argument(
+        "--output-md",
+        type=str,
+        metavar="FILE",
+        help="Export results to Markdown file",
+    )
+    parser.add_argument(
         "--include-down",
         action="store_true",
-        help="Include DOWN hosts in CSV export (default: only UP hosts)",
+        help="Include DOWN hosts in export (default: only UP hosts)",
+    )
+    parser.add_argument(
+        "--no-emoji",
+        action="store_true",
+        help="Disable emoji in Markdown export (use UP/DOWN text)",
     )
     parser.add_argument(
         "--no-color",
@@ -109,9 +120,20 @@ def main(argv: List[str] | None = None) -> int:
         try:
             output_path = export_to_csv(results, ns.output_csv, include_down=ns.include_down)
             color_on = supports_color() and not ns.no_color
-            print(paint(f"✅ Exported to: {output_path}", Color.GREEN, Color.BOLD, enable=color_on))
+            print(paint(f"✅ CSV exported to: {output_path}", Color.GREEN, Color.BOLD, enable=color_on))
         except Exception as e:
-            print(paint(f"❌ Export failed: {e}", Color.RED, Color.BOLD, enable=color_on), file=sys.stderr)
+            print(paint(f"❌ CSV export failed: {e}", Color.RED, Color.BOLD, enable=color_on), file=sys.stderr)
+            return 1
+
+    # Export to Markdown if requested
+    if ns.output_md:
+        try:
+            use_emoji = not ns.no_emoji
+            output_path = export_to_markdown(results, ns.output_md, include_down=ns.include_down, use_emoji=use_emoji)
+            color_on = supports_color() and not ns.no_color
+            print(paint(f"✅ Markdown exported to: {output_path}", Color.GREEN, Color.BOLD, enable=color_on))
+        except Exception as e:
+            print(paint(f"❌ Markdown export failed: {e}", Color.RED, Color.BOLD, enable=color_on), file=sys.stderr)
             return 1
 
     if ns.json:

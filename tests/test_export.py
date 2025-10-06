@@ -7,7 +7,7 @@ import tempfile
 import csv
 from pathlib import Path
 
-from netscan.export import CSVExporter, HostData, export_to_csv
+from netscan.export import CSVExporter, MarkdownExporter, HostData, export_to_csv, export_to_markdown
 
 
 class TestHostData(unittest.TestCase):
@@ -217,6 +217,194 @@ class TestPortRangeFormatting(unittest.TestCase):
         """Test complex pattern."""
         result = self.exporter._format_port_ranges([1, 2, 3, 10, 20, 21, 22, 30])
         self.assertEqual(result, "1-3, 10, 20-22, 30")
+
+
+class TestMarkdownExporter(unittest.TestCase):
+    """Test Markdown export functionality."""
+    
+    def setUp(self):
+        """Create temporary directory for test files."""
+        self.temp_dir = tempfile.mkdtemp()
+    
+    def test_export_empty(self):
+        """Test export with no hosts."""
+        output = Path(self.temp_dir) / "empty.md"
+        exporter = MarkdownExporter(str(output))
+        exporter.export([])
+        
+        self.assertTrue(output.exists())
+        with open(output, 'r') as f:
+            content = f.read()
+            self.assertIn("# Network Scan Results", content)
+            self.assertIn("**Total Hosts**: 0", content)
+    
+    def test_export_with_emoji(self):
+        """Test export with emoji status."""
+        output = Path(self.temp_dir) / "emoji.md"
+        exporter = MarkdownExporter(str(output), use_emoji=True, include_down=True)
+        
+        hosts = [
+            HostData(ip="192.168.1.1", status="UP", latency=1.23),
+            HostData(ip="192.168.1.2", status="DOWN")
+        ]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            content = f.read()
+            self.assertIn("✅ UP", content)
+            self.assertIn("❌ DOWN", content)
+    
+    def test_export_without_emoji(self):
+        """Test export without emoji."""
+        output = Path(self.temp_dir) / "no_emoji.md"
+        exporter = MarkdownExporter(str(output), use_emoji=False)
+        
+        hosts = [
+            HostData(ip="192.168.1.1", status="UP", latency=1.23)
+        ]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            content = f.read()
+            self.assertIn("| UP |", content)
+            self.assertNotIn("✅", content)
+    
+    def test_filter_down_hosts(self):
+        """Test that DOWN hosts are filtered by default."""
+        output = Path(self.temp_dir) / "filtered.md"
+        exporter = MarkdownExporter(str(output), include_down=False)
+        
+        hosts = [
+            HostData(ip="192.168.1.1", status="UP", latency=1.0),
+            HostData(ip="192.168.1.2", status="DOWN"),
+            HostData(ip="192.168.1.3", status="UP", latency=2.0),
+        ]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            content = f.read()
+            self.assertIn("192.168.1.1", content)
+            self.assertNotIn("192.168.1.2", content)
+            self.assertIn("192.168.1.3", content)
+            self.assertIn("**Total Hosts**: 2 (UP only)", content)
+    
+    def test_include_down_hosts(self):
+        """Test including DOWN hosts."""
+        output = Path(self.temp_dir) / "with_down.md"
+        exporter = MarkdownExporter(str(output), include_down=True)
+        
+        hosts = [
+            HostData(ip="192.168.1.1", status="UP", latency=1.0),
+            HostData(ip="192.168.1.2", status="DOWN"),
+        ]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            content = f.read()
+            self.assertIn("192.168.1.1", content)
+            self.assertIn("192.168.1.2", content)
+            self.assertIn("(1 UP, 1 DOWN)", content)
+    
+    def test_port_formatting(self):
+        """Test port formatting in Markdown."""
+        output = Path(self.temp_dir) / "ports.md"
+        exporter = MarkdownExporter(str(output))
+        
+        hosts = [
+            HostData(ip="192.168.1.1", status="UP", ports=[22, 80, 443])
+        ]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            content = f.read()
+            # Ports should be in code backticks
+            self.assertIn("`22, 80, 443`", content)
+    
+    def test_port_ranges(self):
+        """Test port range formatting."""
+        output = Path(self.temp_dir) / "port_ranges.md"
+        exporter = MarkdownExporter(str(output))
+        
+        hosts = [
+            HostData(ip="192.168.1.1", status="UP", ports=[22, 23, 24, 25, 80, 443])
+        ]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            content = f.read()
+            self.assertIn("`22-25, 80, 443`", content)
+    
+    def test_escape_markdown(self):
+        """Test Markdown special character escaping."""
+        output = Path(self.temp_dir) / "escape.md"
+        exporter = MarkdownExporter(str(output))
+        
+        hosts = [
+            HostData(ip="192.168.1.1", status="UP", vendor="Company | Inc.")
+        ]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            content = f.read()
+            # Pipe should be escaped
+            self.assertIn("Company \\| Inc.", content)
+    
+    def test_table_structure(self):
+        """Test that Markdown table structure is valid."""
+        output = Path(self.temp_dir) / "table.md"
+        exporter = MarkdownExporter(str(output))
+        
+        hosts = [
+            HostData(
+                ip="192.168.1.1",
+                status="UP",
+                latency=1.23,
+                hostname="test.local",
+                mac="AA:BB:CC:DD:EE:FF",
+                vendor="Test Vendor",
+                ports=[22, 80]
+            )
+        ]
+        exporter.export(hosts)
+        
+        with open(output, 'r') as f:
+            lines = f.readlines()
+            # Find table header
+            header_found = False
+            separator_found = False
+            for i, line in enumerate(lines):
+                if "| IP Address |" in line:
+                    header_found = True
+                    # Next line should be separator
+                    if i + 1 < len(lines) and "|---" in lines[i + 1]:
+                        separator_found = True
+            
+            self.assertTrue(header_found, "Table header not found")
+            self.assertTrue(separator_found, "Table separator not found")
+    
+    def test_convenience_function(self):
+        """Test export_to_markdown convenience function."""
+        output = Path(self.temp_dir) / "convenience.md"
+        
+        hosts_dict = [
+            {
+                'ip': '192.168.1.1',
+                'status': 'UP',
+                'latency': 1.5,
+                'hostname': 'test.local',
+                'mac': 'AA:BB:CC:DD:EE:FF',
+                'vendor': 'Test',
+                'ports': [22, 80]
+            }
+        ]
+        
+        result_path = export_to_markdown(hosts_dict, str(output))
+        
+        self.assertTrue(Path(result_path).exists())
+        with open(result_path, 'r') as f:
+            content = f.read()
+            self.assertIn('192.168.1.1', content)
+            self.assertIn('test.local', content)
 
 
 if __name__ == '__main__':
