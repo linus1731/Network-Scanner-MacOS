@@ -6,8 +6,10 @@ import platform
 import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import socket
+import time
 from dataclasses import dataclass
-from typing import Generator, List, Optional
+from typing import Generator, List, Optional, Iterable
 
 
 @dataclass(frozen=True)
@@ -22,15 +24,28 @@ class PingResult:
 
 def _build_ping_cmd(ip: str, count: int, timeout: float) -> List[str]:
     system = platform.system().lower()
-    # macOS uses -W timeout in milliseconds; Linux uses -W timeout in seconds (for some ping variants)
     if system == "darwin":
-        # macOS BSD ping: -c <count>, -W <ms> (per-packet timeout)
+        # macOS BSD ping uses -W in milliseconds
         ms = max(1, int(timeout * 1000))
-        return ["/sbin/ping" if os.path.exists("/sbin/ping") else "ping", "-c", str(count), "-W", str(ms), ip]
+        return [
+            "/sbin/ping" if os.path.exists("/sbin/ping") else "ping",
+            "-c",
+            str(count),
+            "-W",
+            str(ms),
+            ip,
+        ]
     else:
-        # Linux: prefer /bin/ping if present; -c <count>, -W <seconds> per-packet timeout
+        # Linux ping uses -W in seconds for per-packet timeout
         sec = max(1, int(round(timeout)))
-        return ["/bin/ping" if os.path.exists("/bin/ping") else "ping", "-c", str(count), "-W", str(sec), ip]
+        return [
+            "/bin/ping" if os.path.exists("/bin/ping") else "ping",
+            "-c",
+            str(count),
+            "-W",
+            str(sec),
+            ip,
+        ]
 
 
 def ping(ip: str, count: int = 1, timeout: float = 1.0) -> PingResult:
@@ -45,18 +60,25 @@ def ping(ip: str, count: int = 1, timeout: float = 1.0) -> PingResult:
             check=False,
         )
         output = proc.stdout or ""
+        # Normalize decimal commas to dots for locales where ping prints e.g. "time=0,23 ms"
+        output_norm = output.replace(",", ".")
         success = proc.returncode == 0 or ("bytes from" in output.lower())
 
         latency = None
-        # Try to parse the first icmp reply time=XX ms
-        m = re.search(r"time[=<]\\s*([0-9]+(?:\\.[0-9]+)?)\\s*ms", output, re.IGNORECASE)
+        # Try to parse first reply line: time=XX ms
+        m = re.search(r"time[=<]\s*([0-9]+(?:\.[0-9]+)?)\s*ms", output_norm, re.IGNORECASE)
         if m:
             latency = float(m.group(1))
         else:
-            # Fallback to summary rtt line e.g., rtt min/avg/max/mdev = 0.032/0.032/0.032/0.000 ms
-            m2 = re.search(r"=\\s*([0-9]+(?:\\.[0-9]+)?)/([0-9]+(?:\\.[0-9]+)?)/", output)
+            # Linux summary: rtt min/avg/max/mdev = a/b/c/d ms
+            m2 = re.search(r"=\s*([0-9]+(?:\.[0-9]+)?)/([0-9]+(?:\.[0-9]+)?)/", output_norm)
             if m2:
                 latency = float(m2.group(2))
+            else:
+                # BSD summary: "round-trip min/avg/max/stddev = 14.654/14.654/14.654/0.000 ms"
+                m3 = re.search(r"round-trip .*?=\s*([0-9]+(?:\.[0-9]+)?)/([0-9]+(?:\.[0-9]+)?)/", output_norm, re.IGNORECASE)
+                if m3:
+                    latency = float(m3.group(2))
 
         return PingResult(ip=ip, up=bool(success), latency_ms=latency)
     except subprocess.TimeoutExpired:
@@ -95,7 +117,27 @@ def expand_targets(target: str) -> List[str]:
         return [target]
 
 
-def scan_cidr(target: str, concurrency: int = 128, timeout: float = 1.0, count: int = 1) -> Generator[dict, None, None]:
+def _tcp_probe(ip: str, ports: tuple[int, ...] = (80, 443, 22), timeout: float = 0.3) -> Optional[float]:
+    """Try TCP connect to common ports; return latency_ms on first success, else None."""
+    for port in ports:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(timeout)
+            t0 = time.perf_counter()
+            s.connect((ip, port))
+            s.close()
+            dt = (time.perf_counter() - t0) * 1000.0
+            return dt
+        except Exception:
+            try:
+                s.close()
+            except Exception:
+                pass
+            continue
+    return None
+
+
+def scan_cidr(target: str, concurrency: int = 128, timeout: float = 1.0, count: int = 1, tcp_fallback: bool = False) -> Generator[dict, None, None]:
     hosts = expand_targets(target)
     if not hosts:
         return
@@ -103,8 +145,51 @@ def scan_cidr(target: str, concurrency: int = 128, timeout: float = 1.0, count: 
     # Bound concurrency
     workers = max(1, min(concurrency, len(hosts), 1024))
 
+    def worker(ip: str) -> dict:
+        res = ping(ip, count=count, timeout=timeout)
+        if (not res.up) and tcp_fallback:
+            lat = _tcp_probe(ip)
+            if lat is not None:
+                res = PingResult(ip=ip, up=True, latency_ms=lat)
+        return res.as_dict()
+
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="netscan") as ex:
-        future_map = {ex.submit(ping, ip, count=count, timeout=timeout): ip for ip in hosts}
+        future_map = {ex.submit(worker, ip): ip for ip in hosts}
         for fut in as_completed(future_map):
             res = fut.result()
-            yield res.as_dict()
+            yield res
+
+
+def _tcp_connect(ip: str, port: int, timeout: float = 0.5) -> bool:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect((ip, port))
+        s.close()
+        return True
+    except Exception:
+        try:
+            s.close()
+        except Exception:
+            pass
+        return False
+
+
+def port_scan(ip: str, ports: Iterable[int], concurrency: int = 256, timeout: float = 0.5) -> List[int]:
+    """Return list of open ports using TCP connect scanning."""
+    ports = list(ports)
+    if not ports:
+        return []
+    workers = max(1, min(concurrency, len(ports), 1024))
+    open_ports: List[int] = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="netscan-ports") as ex:
+        futs = {ex.submit(_tcp_connect, ip, p, timeout): p for p in ports}
+        for fut in as_completed(futs):
+            p = futs[fut]
+            try:
+                if fut.result():
+                    open_ports.append(p)
+            except Exception:
+                pass
+    open_ports.sort()
+    return open_ports
