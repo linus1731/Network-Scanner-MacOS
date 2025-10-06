@@ -1,7 +1,7 @@
 # Network Scanner - Task Tracking
 
 > **Letztes Update**: 6. Oktober 2025  
-> **Aktueller Branch**: v0.1.1  
+> **Aktueller Branch**: feature/scan-profiles  
 > **Aktuelle Version**: 0.1.1
 
 ---
@@ -14,18 +14,20 @@
 - [x] Auto-Port-Scan beim Navigieren
 - [x] Unicode-Box-Design
 - [x] Release Notes und README erstellt
+- [x] Export-Formate (CSV, Markdown, HTML)
+- [x] Scan-Profile System (Quick/Normal/Thorough/Stealth)
 
 ### In Arbeit 🚧
-- [ ] _Keine aktiven Tasks_
+- [x] Task 3: Scan-Profile ✅ (gerade abgeschlossen!)
 
 ### Geplant 📋
-- Phase 1: Export-Formate, Rate-Limits, Scan-Profile
+- Phase 1: ~~Export-Formate~~, Rate-Limits, ~~Scan-Profile~~
 - Phase 2: Banner-Grabbing, OUI-Datenbank
 - Phase 3: IPv6, mDNS, ARP/NDP, History
 
 ---
 
-## 🎯 Phase 1: Quick Wins (Status: 0/14 Tasks)
+## 🎯 Phase 1: Quick Wins (Status: 2/3 Tasks = 67%)
 
 ### Task 1: Zusätzliche Ausgabeformate
 **Status**: 🚧 In Arbeit | **Priorität**: P0 | **Geschätzt**: 3-5 Tage
@@ -102,44 +104,44 @@
 ---
 
 ### Task 3: Scan-Profile
-**Status**: ⬜ Nicht gestartet | **Priorität**: P0 | **Geschätzt**: 4-6 Tage
+**Status**: ✅ Abgeschlossen | **Priorität**: P0 | **Geschätzt**: 4-6 Tage
 
-- [ ] **3.1 Profile-System**
-  - [ ] 3.1.1 Profile-Klasse mit Config
-  - [ ] 3.1.2 Vordefinierte Profile: Quick, Normal, Thorough, Stealth
-  - [ ] 3.1.3 YAML-Konfigurationsdatei-Support
-  - [ ] 3.1.4 Custom-Profile (`~/.netscan/profiles/`)
+- [x] **3.1 Profile-System**
+  - [x] 3.1.1 Profile-Klasse mit Config
+  - [x] 3.1.2 Vordefinierte Profile: Quick, Normal, Thorough, Stealth
+  - [x] 3.1.3 YAML-Konfigurationsdatei-Support
+  - [x] 3.1.4 Custom-Profile (`~/.netscan/profiles/`)
 
-- [ ] **3.2 Profile-Parameter**
-  - [ ] 3.2.1 Quick: concurrency=256, timeout=0.5, ports=top100
-  - [ ] 3.2.2 Normal: concurrency=128, timeout=1.0, ports=top1000
-  - [ ] 3.2.3 Thorough: concurrency=64, timeout=2.0, ports=1-10000
-  - [ ] 3.2.4 Stealth: concurrency=10, timeout=3.0, random-delay
+- [x] **3.2 Profile-Parameter**
+  - [x] 3.2.1 Quick: concurrency=256, timeout=0.5, ports=top100
+  - [x] 3.2.2 Normal: concurrency=128, timeout=1.0, ports=top1000
+  - [x] 3.2.3 Thorough: concurrency=64, timeout=2.0, ports=1-10000
+  - [x] 3.2.4 Stealth: concurrency=10, timeout=3.0, random-delay
 
-- [ ] **3.3 CLI-Integration**
-  - [ ] 3.3.1 `--profile <name>`
-  - [ ] 3.3.2 `--list-profiles`
-  - [ ] 3.3.3 `--save-profile <name>`
-  - [ ] 3.3.4 Override-Optionen
+- [x] **3.3 CLI-Integration**
+  - [x] 3.3.1 `--profile <name>`
+  - [x] 3.3.2 `--list-profiles`
+  - [x] 3.3.3 `--save-profile <name>`
+  - [x] 3.3.4 Override-Optionen
 
-- [ ] **3.4 TUI-Integration**
-  - [ ] 3.4.1 Profil-Auswahl beim Start
-  - [ ] 3.4.2 Hotkey `Shift+P` für Wechsel
-  - [ ] 3.4.3 Aktives Profil im Header
-  - [ ] 3.4.4 Profil-spezifische Farben
+- [x] **3.4 TUI-Integration**
+  - [x] 3.4.1 Profil-Auswahl beim Start (default: normal)
+  - [x] 3.4.2 Hotkey `Shift+P` für Wechsel
+  - [x] 3.4.3 Aktives Profil im Header
+  - [x] 3.4.4 Profil-spezifische Farben (in Dialog)
 
-- [ ] **3.5 Dokumentation**
-  - [ ] 3.5.1 Profil-Vergleichstabelle
-  - [ ] 3.5.2 Beispiel-Custom-Profile
-  - [ ] 3.5.3 Use-Cases dokumentieren
+- [x] **3.5 Dokumentation**
+  - [x] 3.5.1 Profil-Vergleichstabelle (im README)
+  - [x] 3.5.2 Beispiel-Custom-Profile (4 examples)
+  - [x] 3.5.3 Use-Cases dokumentieren
 
-**Dateien zu erstellen/ändern**:
-- `netscan/profiles.py` (NEU)
-- `netscan/cli.py` (Optionen)
-- `netscan/tui.py` (Profil-Auswahl)
-- `~/.netscan/profiles/` (Config-Verzeichnis)
-- `examples/custom-profiles/` (NEU)
-- `tests/test_profiles.py` (NEU)
+**Dateien erstellt/geändert**:
+- `netscan/profiles.py` ✅ (NEU)
+- `netscan/cli.py` ✅ (Optionen)
+- `netscan/tui.py` ✅ (Profil-Auswahl)
+- `~/.netscan/profiles/` ✅ (Config-Verzeichnis)
+- `examples/custom-profiles/` ✅ (NEU - 4 Beispiele)
+- `tests/test_profiles.py` ✅ (NEU - 22 Tests)
 
 ---
 

@@ -1,0 +1,13 @@
+# IoT Device Discovery Profile
+# Optimized for finding IoT devices with specific ports and patient timing
+# Use case: Smart home setup, IoT inventory, device troubleshooting
+
+name: iot-discovery
+description: Optimized for discovering IoT and smart home devices
+concurrency: 64              # Moderate concurrency (IoT devices can be slow)
+timeout: 2.5                 # Patient timeout for slow IoT devices
+port_range: top1000          # Many IoT devices use non-standard ports
+rate_limit: 150              # Gentle rate limit (IoT devices may be fragile)
+random_delay: true           # Spread out to avoid overwhelming devices
+min_delay: 0.02              # Small delays
+max_delay: 0.1               # 100ms max delay

@@ -1,0 +1,13 @@
+# Production-Safe Scan Profile
+# Conservative settings for scanning production networks without causing disruption
+# Use case: Regular monitoring of live production systems
+
+name: production-safe
+description: Conservative scan for production networks (low network impact)
+concurrency: 32              # Low concurrency to avoid overwhelming network
+timeout: 2.0                 # Generous timeout to not miss slow hosts
+port_range: top100           # Only scan top 100 most common ports
+rate_limit: 100              # Limit to 100 packets/second
+random_delay: true           # Spread out scans over time
+min_delay: 0.05              # Minimum 50ms between scans
+max_delay: 0.2               # Maximum 200ms between scans
