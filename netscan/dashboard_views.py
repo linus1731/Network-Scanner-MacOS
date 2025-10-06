@@ -210,55 +210,376 @@ class DashboardView(View):
 
 
 class HostListView(View):
-    """Traditional host list view (current implementation)."""
+    """Enhanced host list view with better visuals."""
     
     def __init__(self):
         """Initialize host list view."""
         super().__init__("hosts")
     
     def draw(self, stdscr, app_state: Any) -> None:
-        """Draw the host list view."""
-        # This will use the existing host list drawing code from TuiApp
-        # For now, delegate to the app's existing draw logic
+        """Draw the enhanced host list view."""
         h, w = stdscr.getmaxyx()
         
-        # Calculate layout similar to current TUI
-        panel_w = max(45, min(70, w // 3))
-        if w - panel_w - 2 < 50:
-            panel_w = max(40, w - 52)
-        if panel_w < 40:
-            panel_w = 40
-        if w < 100:
-            panel_w = max(35, w // 2)
-        
-        header_y = 4  # Below title and help
-        table_x = panel_w + 1
+        # Start drawing below the tab bar (line 3)
+        start_y = 3
         
         # Get scan results
         with app_state.scan_lock:
-            progress = len(app_state.scan_results)
-            up_count = sum(1 for r in app_state.scan_results if r.get('up'))
+            all_hosts = app_state.scan_results[:]
         
-        # Show scan status
-        if app_state.scanning and app_state.scan_current_host:
-            state = f'scanning {app_state.scan_current_host}'
-        elif app_state.scanning:
-            state = 'running'
+        # Filter if needed
+        if app_state.only_up:
+            hosts = [r for r in all_hosts if r.get('up')]
         else:
-            state = 'idle'
+            hosts = all_hosts
         
+        # Sort hosts
+        hosts = self._sort_hosts(hosts, app_state.sort_by, app_state.sort_desc)
+        
+        # Statistics bar
+        up_count = sum(1 for r in all_hosts if r.get('up'))
+        down_count = len(all_hosts) - up_count
+        
+        if app_state.scanning and app_state.scan_current_host:
+            status = f'⚡ Scanning {app_state.scan_current_host}'
+            status_color = 3  # Yellow
+        elif app_state.scanning:
+            status = '⚡ Scanning...'
+            status_color = 3
+        else:
+            status = '✓ Ready'
+            status_color = 1  # Green
+        
+        # Draw statistics header with box drawing
         try:
-            stdscr.addstr(header_y, table_x, f"Scan results ({state})  hosts={progress}", curses.A_BOLD)
+            # Top border
+            stdscr.addstr(start_y, 0, "┌" + "─" * (w - 2) + "┐", curses.color_pair(4))
+            
+            # Statistics line with icons
+            stats_line = f" 🌐 Network: {app_state.cidr}  │  📊 Total: {len(all_hosts)}  │  "
+            stats_line += f"🟢 UP: {up_count}  │  🔴 DOWN: {down_count}  │  {status} "
+            
+            # Pad to width
+            stats_line = stats_line.ljust(w - 2)
+            stdscr.addstr(start_y + 1, 0, "│", curses.color_pair(4))
+            stdscr.addstr(start_y + 1, 1, stats_line[:w-2], curses.A_BOLD | curses.color_pair(status_color))
+            stdscr.addstr(start_y + 1, w - 1, "│", curses.color_pair(4))
+            
+            # Bottom border
+            stdscr.addstr(start_y + 2, 0, "└" + "─" * (w - 2) + "┘", curses.color_pair(4))
         except curses.error:
             pass
         
-        # Note: Full host list drawing would go here
-        # For now, this is a placeholder that will be integrated with existing code
+        # Table header
+        table_y = start_y + 4
+        
+        # Column widths
+        col_ip_width = 17
+        col_status_width = 10
+        col_latency_width = 12
+        col_hostname_width = 25
+        col_mac_width = 19
+        col_vendor_width = max(20, w - col_ip_width - col_status_width - col_latency_width - col_hostname_width - col_mac_width - 10)
+        
+        # Draw table header with box
+        try:
+            # Header box top
+            stdscr.addstr(table_y, 0, "┌" + "─" * (w - 2) + "┐", curses.color_pair(4) | curses.A_DIM)
+            
+            # Column headers
+            header_y = table_y + 1
+            col_x = 2
+            
+            # Sort indicators
+            def get_sort_indicator(col_name):
+                if app_state.sort_by == col_name:
+                    return " ↓" if app_state.sort_desc else " ↑"
+                return ""
+            
+            headers = [
+                ("IP Address" + get_sort_indicator("ip"), col_ip_width, 4),
+                ("Status" + get_sort_indicator("status"), col_status_width, 4),
+                ("Latency" + get_sort_indicator("latency"), col_latency_width, 4),
+                ("Hostname" + get_sort_indicator("hostname"), col_hostname_width, 4),
+                ("MAC Address", col_mac_width, 4),
+                ("Vendor", col_vendor_width, 4),
+            ]
+            
+            stdscr.addstr(header_y, 0, "│", curses.color_pair(4) | curses.A_DIM)
+            for header, width, color in headers:
+                try:
+                    stdscr.addstr(header_y, col_x, header[:width].ljust(width), curses.A_BOLD | curses.color_pair(color))
+                    col_x += width + 1
+                except curses.error:
+                    pass
+            stdscr.addstr(header_y, w - 1, "│", curses.color_pair(4) | curses.A_DIM)
+            
+            # Header separator
+            stdscr.addstr(table_y + 2, 0, "├" + "─" * (w - 2) + "┤", curses.color_pair(4) | curses.A_DIM)
+        except curses.error:
+            pass
+        
+        # Table content area
+        content_start_y = table_y + 3
+        content_height = h - content_start_y - 3  # Leave room for footer
+        
+        # Calculate visible range based on selection
+        if app_state.sel < 0:
+            app_state.sel = 0
+        if app_state.sel >= len(hosts):
+            app_state.sel = max(0, len(hosts) - 1)
+        
+        # Scrolling window
+        scroll_offset = max(0, app_state.sel - content_height // 2)
+        visible_hosts = hosts[scroll_offset:scroll_offset + content_height]
+        
+        # Draw host rows
+        for idx, host in enumerate(visible_hosts):
+            row_y = content_start_y + idx
+            if row_y >= h - 3:
+                break
+            
+            global_idx = scroll_offset + idx
+            is_selected = (global_idx == app_state.sel)
+            
+            # Row styling
+            if is_selected:
+                row_attr = curses.A_REVERSE | curses.A_BOLD
+                border_color = 3  # Yellow highlight
+            else:
+                row_attr = curses.A_NORMAL
+                border_color = 4
+            
+            try:
+                # Left border
+                stdscr.addstr(row_y, 0, "│", curses.color_pair(border_color) | curses.A_DIM)
+                
+                # Row content
+                col_x = 2
+                
+                # IP
+                ip = host.get('ip', '')
+                stdscr.addstr(row_y, col_x, ip[:col_ip_width].ljust(col_ip_width), row_attr | curses.color_pair(3))
+                col_x += col_ip_width + 1
+                
+                # Status with icon
+                is_up = host.get('up', False)
+                if is_up:
+                    status_text = "🟢 UP"
+                    status_color = 1
+                else:
+                    status_text = "🔴 DOWN"
+                    status_color = 2
+                
+                stdscr.addstr(row_y, col_x, status_text[:col_status_width].ljust(col_status_width), 
+                            row_attr | curses.color_pair(status_color) | curses.A_BOLD)
+                col_x += col_status_width + 1
+                
+                # Latency
+                lat = host.get('latency_ms')
+                if lat is not None and is_up:
+                    lat_text = f"{lat:.2f} ms"
+                    # Color based on latency
+                    if lat < 10:
+                        lat_color = 1  # Green - excellent
+                    elif lat < 50:
+                        lat_color = 3  # Yellow - good
+                    else:
+                        lat_color = 2  # Red - slow
+                else:
+                    lat_text = "-"
+                    lat_color = 4
+                
+                stdscr.addstr(row_y, col_x, lat_text[:col_latency_width].ljust(col_latency_width),
+                            row_attr | curses.color_pair(lat_color))
+                col_x += col_latency_width + 1
+                
+                # Hostname
+                hostname = host.get('hostname') or '-'
+                stdscr.addstr(row_y, col_x, hostname[:col_hostname_width].ljust(col_hostname_width),
+                            row_attr | curses.color_pair(4))
+                col_x += col_hostname_width + 1
+                
+                # MAC
+                mac = host.get('mac') or '-'
+                stdscr.addstr(row_y, col_x, mac[:col_mac_width].ljust(col_mac_width),
+                            row_attr | curses.color_pair(4) | curses.A_DIM)
+                col_x += col_mac_width + 1
+                
+                # Vendor
+                vendor = host.get('vendor') or '-'
+                stdscr.addstr(row_y, col_x, vendor[:col_vendor_width].ljust(col_vendor_width),
+                            row_attr | curses.color_pair(4))
+                
+                # Right border
+                stdscr.addstr(row_y, w - 1, "│", curses.color_pair(border_color) | curses.A_DIM)
+                
+            except curses.error:
+                pass
+        
+        # Fill empty rows
+        for idx in range(len(visible_hosts), content_height):
+            row_y = content_start_y + idx
+            if row_y >= h - 3:
+                break
+            try:
+                stdscr.addstr(row_y, 0, "│" + " " * (w - 2) + "│", curses.color_pair(4) | curses.A_DIM)
+            except curses.error:
+                pass
+        
+        # Table footer
+        footer_y = h - 3
+        try:
+            stdscr.addstr(footer_y, 0, "└" + "─" * (w - 2) + "┘", curses.color_pair(4) | curses.A_DIM)
+        except curses.error:
+            pass
+        
+        # Help line at bottom
+        help_y = h - 2
+        help_text = "⌨  [↑↓] Navigate  [Enter] Details  [p] Port Scan  [s] Scan  [e] Export  [P] Profile  [a] Filter  [1-5] Sort  [q] Quit"
+        try:
+            stdscr.addstr(help_y, 0, help_text[:w], curses.color_pair(4) | curses.A_DIM)
+        except curses.error:
+            pass
+        
+        # Selection info line
+        info_y = h - 1
+        if hosts and 0 <= app_state.sel < len(hosts):
+            selected_host = hosts[app_state.sel]
+            info_text = f"📍 Selected: {selected_host.get('ip')} ({app_state.sel + 1}/{len(hosts)})"
+            if app_state.only_up:
+                info_text += "  [Filtered: UP only]"
+        else:
+            info_text = f"Total: {len(hosts)} hosts"
+        
+        try:
+            stdscr.addstr(info_y, 0, info_text[:w], curses.A_BOLD | curses.color_pair(3))
+        except curses.error:
+            pass
+    
+    def _sort_hosts(self, hosts, sort_by, sort_desc):
+        """Sort hosts by specified column."""
+        if sort_by == 'ip':
+            import ipaddress
+            hosts = sorted(hosts, key=lambda h: ipaddress.ip_address(h.get('ip', '0.0.0.0')))
+        elif sort_by == 'status':
+            hosts = sorted(hosts, key=lambda h: (not h.get('up', False), h.get('ip', '')))
+        elif sort_by == 'latency':
+            hosts = sorted(hosts, key=lambda h: (h.get('latency_ms') is None, h.get('latency_ms', 999999)))
+        elif sort_by == 'hostname':
+            hosts = sorted(hosts, key=lambda h: (h.get('hostname') or 'zzz').lower())
+        elif sort_by == 'mac':
+            hosts = sorted(hosts, key=lambda h: h.get('mac') or 'zz:zz:zz:zz:zz:zz')
+        
+        if sort_desc:
+            hosts = list(reversed(hosts))
+        
+        return hosts
     
     def handle_input(self, ch: int, app_state: Any) -> bool:
         """Handle input for host list view."""
-        # Most inputs will be handled by existing TuiApp logic
-        # Just handle view-specific keys here
+        # Get current filtered/sorted list
+        with app_state.scan_lock:
+            all_hosts = app_state.scan_results[:]
+        
+        if app_state.only_up:
+            hosts = [r for r in all_hosts if r.get('up')]
+        else:
+            hosts = all_hosts
+        
+        hosts = self._sort_hosts(hosts, app_state.sort_by, app_state.sort_desc)
+        
+        # Navigation
+        if ch == curses.KEY_UP:
+            if app_state.sel > 0:
+                app_state.sel -= 1
+            return True
+        elif ch == curses.KEY_DOWN:
+            if app_state.sel < len(hosts) - 1:
+                app_state.sel += 1
+            return True
+        elif ch == curses.KEY_HOME:
+            app_state.sel = 0
+            return True
+        elif ch == curses.KEY_END:
+            app_state.sel = max(0, len(hosts) - 1)
+            return True
+        elif ch == curses.KEY_PPAGE:  # Page Up
+            app_state.sel = max(0, app_state.sel - 10)
+            return True
+        elif ch == curses.KEY_NPAGE:  # Page Down
+            app_state.sel = min(len(hosts) - 1, app_state.sel + 10)
+            return True
+        
+        # Actions
+        elif ch in (10, 13, curses.KEY_ENTER):
+            # Enter - switch to details view
+            if hosts and 0 <= app_state.sel < len(hosts):
+                app_state.view_manager.switch_to('details', app_state)
+            return True
+        
+        elif ch == ord('p') or ch == ord('P'):
+            # Port scan selected host
+            if hosts and 0 <= app_state.sel < len(hosts):
+                selected_host = hosts[app_state.sel]
+                ip = selected_host.get('ip')
+                if ip and selected_host.get('up'):
+                    import threading
+                    app_state.portscan_target = ip
+                    app_state.portscan_running = True
+                    threading.Thread(
+                        target=app_state._portscan_worker,
+                        args=(ip,),
+                        daemon=True
+                    ).start()
+                    app_state.activity_feed.add(
+                        'port_scan',
+                        f'Port scan started for {ip}',
+                        ip=ip,
+                        severity='info'
+                    )
+            return True
+        
+        elif ch == ord('a'):
+            # Toggle filter
+            app_state.only_up = not app_state.only_up
+            app_state.sel = 0
+            return True
+        
+        elif ch in (ord('1'), ord('2'), ord('3'), ord('4'), ord('5')):
+            # Sort by column
+            sort_map = {
+                ord('1'): 'ip',
+                ord('2'): 'status',
+                ord('3'): 'latency',
+                ord('4'): 'hostname',
+                ord('5'): 'mac',
+            }
+            new_sort = sort_map.get(ch)
+            if new_sort == app_state.sort_by:
+                # Toggle direction
+                app_state.sort_desc = not app_state.sort_desc
+            else:
+                app_state.sort_by = new_sort
+                app_state.sort_desc = False
+            return True
+        
+        elif ch == ord('o'):
+            # Cycle sort column
+            sort_cycle = ['ip', 'status', 'latency', 'hostname', 'mac']
+            try:
+                idx = sort_cycle.index(app_state.sort_by)
+                app_state.sort_by = sort_cycle[(idx + 1) % len(sort_cycle)]
+            except ValueError:
+                app_state.sort_by = 'ip'
+            return True
+        
+        elif ch == ord('O'):
+            # Toggle sort direction
+            app_state.sort_desc = not app_state.sort_desc
+            return True
+        
+        # Let other keys pass through to global handlers
         return False
     
     def on_enter(self, app_state: Any) -> None:

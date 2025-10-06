@@ -721,16 +721,15 @@ class TuiApp:
             tab_bar = self.view_manager.get_view_tabs()
             stdscr.addstr(2, 0, tab_bar[: max(0, w - 1)], cpair(3) | curses.A_BOLD)
 
-            # Check if we're in dashboard view - if so, delegate to view manager
+            # All views now use the view manager system
             current_view = self.view_manager.get_current_view()
-            if current_view and current_view.name in ['dashboard', 'details']:
-                # These views handle their own drawing entirely
+            if current_view:
+                # View handles its own drawing
                 self.view_manager.draw(stdscr, self)
-                # Skip the rest of the traditional drawing
                 stdscr.refresh()
                 ch = stdscr.getch()
                 
-                # Handle view switching first
+                # Handle view switching first (global hotkeys)
                 if ch == curses.KEY_F1 or ch == 265:  # F1 - Dashboard
                     self.view_manager.switch_to('dashboard', self)
                     continue
@@ -746,18 +745,91 @@ class TuiApp:
                 elif ch == 353:  # Shift+Tab - cycle prev (KEY_BTAB)
                     self.view_manager.cycle_prev(self)
                     continue
+                elif ch == ord('q'):
+                    # Global quit
+                    self.stop = True
+                    self._save_cache()
+                    break
                 
-                # Let view handle other input
+                # Let view handle its input
                 if current_view.handle_input(ch, self):
                     continue
                 
-                # Fall through to global handlers
-                if ch == ord('q'):
-                    break
+                # Global actions that work in all views
+                if ch == ord('s') and not self.scanning:
+                    threading.Thread(target=self._scan, daemon=True).start()
+                    continue
+                elif ch == ord('e'):
+                    self._show_export_dialog(stdscr)
+                    continue
+                elif ch == ord('P'):
+                    self._show_profile_dialog(stdscr)
+                    continue
+                elif ch == ord('C'):
+                    cache_count = len(self.portscan_cache)
+                    self._clear_cache()
+                    self.export_message = f"✓ Cleared {cache_count} cached entries"
+                    self.export_message_color = 1
+                    self.export_message_time = time.time()
+                    continue
+                elif ch == ord('r'):
+                    self.iface = get_default_interface() or self.iface
+                    self.cidr = get_local_network_cidr() or self.cidr
+                    self._clear_expired_cache()
+                    continue
+                elif ch == ord('+') or ch == ord('='):
+                    stats = self.rate_limiter.get_stats()
+                    current_rate = stats.get('rate', 0)
+                    if not self.rate_limit_enabled or current_rate == 0:
+                        new_rate = 10
+                        self.rate_limit_enabled = True
+                    elif current_rate < 10:
+                        new_rate = current_rate + 1
+                    elif current_rate < 50:
+                        new_rate = current_rate + 5
+                    else:
+                        new_rate = current_rate + 10
+                    self.rate_limiter.set_rate(new_rate, int(new_rate * 2))
+                    self.export_message = f"Rate limit: {new_rate} req/s"
+                    self.export_message_color = 1
+                    self.export_message_time = time.time()
+                    continue
+                elif ch == ord('-') or ch == ord('_'):
+                    stats = self.rate_limiter.get_stats()
+                    current_rate = stats.get('rate', 0)
+                    if not self.rate_limit_enabled or current_rate == 0:
+                        pass
+                    elif current_rate <= 2:
+                        self.rate_limit_enabled = False
+                        self.rate_limiter.set_rate(0, 1)
+                        self.export_message = "Rate limit: disabled"
+                        self.export_message_color = 1
+                        self.export_message_time = time.time()
+                    elif current_rate <= 10:
+                        new_rate = current_rate - 1
+                        self.rate_limiter.set_rate(new_rate, int(new_rate * 2))
+                        self.export_message = f"Rate limit: {new_rate} req/s"
+                        self.export_message_color = 1
+                        self.export_message_time = time.time()
+                    elif current_rate <= 50:
+                        new_rate = current_rate - 5
+                        self.rate_limiter.set_rate(new_rate, int(new_rate * 2))
+                        self.export_message = f"Rate limit: {new_rate} req/s"
+                        self.export_message_color = 1
+                        self.export_message_time = time.time()
+                    else:
+                        new_rate = current_rate - 10
+                        self.rate_limiter.set_rate(new_rate, int(new_rate * 2))
+                        self.export_message = f"Rate limit: {new_rate} req/s"
+                        self.export_message_color = 1
+                        self.export_message_time = time.time()
+                    continue
+                
+                # If we get here, ignore the key and continue loop
                 continue
-
-            # For 'hosts' view, render using legacy table code
-            # Graph lines: RX and TX sparklines
+            
+            # Fallback: Should never reach here with view system active
+            # (Legacy code path removed - all views use ViewManager now)
             # Build prettier graphs: labels + current + spark + max scale
             # determine dynamic widths based on window
             rx_label = f"RX {fmt(rx)}  "
