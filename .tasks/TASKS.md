@@ -96,7 +96,7 @@
   - [x] 2.3.1 Rate-Limit-Konfiguration in main()
   - [x] 2.3.2 Help text mit Empfehlungen
   - [x] 2.3.3 Status-Ausgabe beim Start
-  - [ ] 2.3.4 _TUI-Integration: Steht noch aus (siehe Task F)_
+  - [x] 2.3.4 TUI-Integration: +/- hotkeys, visual indicators, header display ✅
 
 - [x] **2.4 Tests**
   - [x] 2.4.1 13 Unit-Tests geschrieben (100% Pass)
